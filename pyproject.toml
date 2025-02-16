@@ -1,25 +1,42 @@
 [tool.poetry]
 name = "fastllm"
 version = "0.1.0"
-description = "High-performance parallel LLM API request tool"
+description = "High-performance parallel LLM API request tool with caching and multiple provider support"
 authors = ["Your Name <your.email@example.com>"]
 readme = "README.md"
 packages = [{include = "fastllm"}]
+license = "MIT"
+keywords = ["llm", "ai", "openai", "parallel", "caching", "api"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 
 [tool.poetry.dependencies]
 python = "^3.9"
-httpx = "^0.27.0"
+httpx = "^0.27.2"
 asyncio = "^3.4.3"
-pydantic = "^2.6.3"
-rich = "^13.7.1"
-typer = "^0.9.0"
+pydantic = "^2.10.6"
+rich = "^13.9.4"
+typer = "^0.9.4"
+diskcache = "^5.6.3"
+anyio = "^4.8.0"
+typing_extensions = "^4.12.2"
+tqdm = "^4.67.1"
 
 [tool.poetry.group.dev.dependencies]
-ruff = "^0.3.2"
-pytest = "^8.1.1"
-pytest-asyncio = "^0.23.5"
+ruff = "^0.3.7"
+pytest = "^8.3.4"
+pytest-asyncio = "^0.23.8"
 pytest-cov = "^4.1.0"
-black = "^24.2.0"
+black = "^24.10.0"
+coverage = "^7.6.10"
 
 [build-system]
 requires = ["poetry-core"]
