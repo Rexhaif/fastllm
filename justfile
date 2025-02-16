@@ -41,10 +41,9 @@ run *ARGS:
 
 
 # Run parallel request test with OpenRouter
-openrouter-test repeats="20" concurrency="50" model="meta-llama/llama-3.2-3b-instruct" temperature="0.7" max_tokens="":
+openrouter-test repeats="20" cache_type="disk" concurrency="50" model="meta-llama/llama-3.2-3b-instruct" :
     OPENROUTER_API_KEY="${OPENROUTER_API_KEY}" poetry run python examples/parallel_test.py \
         --model {{model}} \
         --repeats {{repeats}} \
         --concurrency {{concurrency}} \
-        $([ ! -z "{{temperature}}" ] && echo "--temperature {{temperature}}") \
-        $([ ! -z "{{max_tokens}}" ] && echo "--max-tokens {{max_tokens}}") 
+        --cache-type {{cache_type}}

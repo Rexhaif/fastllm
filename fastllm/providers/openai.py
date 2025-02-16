@@ -71,11 +71,29 @@ class OpenAIRequest(LLMRequest):
     provider: str = "openai"
     model: str = Field(default="gpt-4o-mini")
     messages: list[Message]
+    extra_params: dict[str, Any] = Field(default_factory=dict, exclude=True)
 
     @model_validator(mode="before")
     @classmethod
     def validate_data(cls, data: dict[str, Any]) -> dict[str, Any]:
-        """Convert OpenAI message types to our Message type."""
+        """Convert OpenAI message types to our Message type and extract extra params."""
+        # Create a copy of the data to avoid modifying the input
+        data = data.copy()
+        
+        # Extract known fields - must match the list in compute_request_hash
+        known_fields = {
+            "provider", "model", "messages", "temperature", "max_completion_tokens",
+            "top_p", "presence_penalty", "frequency_penalty", "stop", "stream",
+            "_request_id", "_order_id"  # Internal fields, handled separately in hash computation
+        }
+        
+        # Collect extra parameters
+        extra_params = {k: v for k, v in data.items() if k not in known_fields}
+        for k in extra_params:
+            data.pop(k)
+        data["extra_params"] = extra_params
+
+        # Convert messages
         if "messages" in data:
             if isinstance(data["messages"], list):
                 data["messages"] = [
@@ -105,25 +123,30 @@ class OpenAIRequest(LLMRequest):
 
     def to_request_payload(self) -> dict[str, Any]:
         """Convert request to OpenAI API payload."""
-        return {
+        # Start with base parameters
+        payload = {
             "model": self.model,
             "messages": self.to_openai_messages(),
             "temperature": self.temperature,
-            **({"max_tokens": self.max_tokens} if self.max_tokens else {}),
-            **({"top_p": self.top_p} if self.top_p else {}),
-            **(
-                {"presence_penalty": self.presence_penalty}
-                if self.presence_penalty
-                else {}
-            ),
-            **(
-                {"frequency_penalty": self.frequency_penalty}
-                if self.frequency_penalty
-                else {}
-            ),
-            **({"stop": self.stop} if self.stop else {}),
             "stream": self.stream,
         }
+
+        # Add optional parameters if they are set
+        if self.max_completion_tokens is not None:
+            payload["max_completion_tokens"] = self.max_completion_tokens
+        if self.top_p is not None:
+            payload["top_p"] = self.top_p
+        if self.presence_penalty is not None:
+            payload["presence_penalty"] = self.presence_penalty
+        if self.frequency_penalty is not None:
+            payload["frequency_penalty"] = self.frequency_penalty
+        if self.stop is not None:
+            payload["stop"] = self.stop
+
+        # Add any extra parameters
+        payload.update(self.extra_params)
+
+        return payload
 
     @classmethod
     def from_prompt(

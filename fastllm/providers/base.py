@@ -1,7 +1,7 @@
 """Base classes for LLM providers."""
 
 from abc import ABC, abstractmethod
-from typing import Any, Generic, Optional, TypeVar
+from typing import Any, Generic, Optional
 
 import httpx
 

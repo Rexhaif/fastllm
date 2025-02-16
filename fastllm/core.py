@@ -29,8 +29,6 @@ from rich.progress import (
     MofNCompleteColumn
 )
 
-if TYPE_CHECKING:
-    pass
 
 # Define a type variable for provider-specific response types
 ResponseT = TypeVar("ResponseT", bound=Union[ChatCompletion, Any])
@@ -39,9 +37,10 @@ ResponseT = TypeVar("ResponseT", bound=Union[ChatCompletion, Any])
 class ResponseWrapper(Generic[ResponseT]):
     """Wrapper for provider responses that includes request ID for sorting."""
 
-    def __init__(self, response: ResponseT, request_id: str):
+    def __init__(self, response: ResponseT, request_id: str, order_id: int):
         self.response = response
         self.request_id = request_id
+        self._order_id = order_id
 
     @property
     def usage(self) -> Optional[CompletionUsage]:
@@ -59,6 +58,7 @@ class TokenStats:
     completion_tokens: int = 0
     total_tokens: int = 0
     requests_completed: int = 0
+    cache_hits: int = 0  # Track cache hits
     start_time: float = 0.0
 
     @property
@@ -77,12 +77,20 @@ class TokenStats:
             return 0.0
         return self.completion_tokens / self.elapsed_time
 
-    def update(self, prompt_tokens: int, completion_tokens: int) -> None:
+    @property
+    def cache_hit_ratio(self) -> float:
+        if self.requests_completed == 0:
+            return 0.0
+        return self.cache_hits / self.requests_completed
+
+    def update(self, prompt_tokens: int, completion_tokens: int, is_cache_hit: bool = False) -> None:
         """Update token statistics."""
         self.prompt_tokens += prompt_tokens
         self.completion_tokens += completion_tokens
         self.total_tokens += prompt_tokens + completion_tokens
         self.requests_completed += 1
+        if is_cache_hit:
+            self.cache_hits += 1
 
 
 class ProgressTracker:
@@ -103,6 +111,7 @@ class ProgressTracker:
             TimeRemainingColumn(),
             TimeElapsedColumn(),
             TextColumn("[blue]{task.fields[stats]}"),
+            TextColumn("[yellow]{task.fields[cache]}"),
             disable=not show_progress,
         )
 
@@ -111,6 +120,7 @@ class ProgressTracker:
             description="Processing requests",
             total=total_requests,
             stats="Starting...",
+            cache="",
         )
 
     def __enter__(self):
@@ -122,20 +132,26 @@ class ProgressTracker:
         """Stop progress display."""
         self.progress.stop()
 
-    def update(self, prompt_tokens: int, completion_tokens: int):
+    def update(self, prompt_tokens: int, completion_tokens: int, is_cache_hit: bool = False):
         """Update progress and token statistics."""
-        self.stats.update(prompt_tokens, completion_tokens)
+        self.stats.update(prompt_tokens, completion_tokens, is_cache_hit)
 
-        # Update progress display with separate token rates and arrows
+        # Update progress display with token rates and cache stats
         stats_text = (
-            f"[green]↑{self.stats.prompt_tokens_per_second:.1f}[/green] prompt t/s "
-            f"[red]↓{self.stats.completion_tokens_per_second:.1f}[/red] completion t/s"
+            f"[green]⬆ {self.stats.prompt_tokens_per_second:.1f}[/green] "
+            f"[red]⬇ {self.stats.completion_tokens_per_second:.1f}[/red] t/s"
+        )
+        
+        cache_text = (
+            f"Cache: [green]{self.stats.cache_hit_ratio*100:.1f}%[/green] hits, "
+            f"[yellow]{(1-self.stats.cache_hit_ratio)*100:.1f}%[/yellow] new"
         )
 
         self.progress.update(
             self.task_id,
             advance=1,
             stats=stats_text,
+            cache=cache_text,
         )
 
 
@@ -166,7 +182,7 @@ class LLMRequest(BaseModel):
     messages: list[Message]
     model: Optional[str] = None
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
-    max_tokens: Optional[int] = None
+    max_completion_tokens: Optional[int] = None
     top_p: Optional[float] = Field(default=1.0, ge=0.0, le=1.0)
     presence_penalty: Optional[float] = Field(default=0.0, ge=-2.0, le=2.0)
     frequency_penalty: Optional[float] = Field(default=0.0, ge=-2.0, le=2.0)
@@ -231,14 +247,25 @@ class RequestManager:
         retry_attempts: int = 3,
         retry_delay: float = 1.0,
         show_progress: bool = True,
+        caching_provider: Optional['CacheProvider'] = None
     ):
         self.provider = provider
         self.concurrency = concurrency
         self.timeout = timeout
         self.retry_attempts = retry_attempts
         self.retry_delay = retry_delay
-        self.semaphore = asyncio.Semaphore(concurrency)
         self.show_progress = show_progress
+        self.cache_provider = caching_provider
+
+    def _calculate_chunk_size(self) -> int:
+        """Calculate optimal chunk size based on concurrency.
+        
+        The chunk size is calculated as 2 * concurrency to allow for some overlap
+        and better resource utilization while still maintaining reasonable memory usage.
+        This provides a balance between creating too many tasks at once and
+        underutilizing the available concurrency.
+        """
+        return min(self.concurrency * 2, 1000)  # Cap at 1000 to prevent excessive memory usage
 
     def process_batch(
         self,
@@ -263,45 +290,80 @@ class RequestManager:
         request: dict[str, Any],
         progress: Optional[ProgressTracker] = None,
     ) -> ResponseWrapper[ResponseT]:
-        """Process a single LLM request with retries."""
-        async with self.semaphore:
-            for attempt in range(self.retry_attempts):
-                try:
-                    response = await self.provider.make_request(
-                        client,
-                        request,
-                        self.timeout,
-                    )
-                    wrapped = ResponseWrapper(response, request["_request_id"])
+        # Get order ID and request ID from request
+        order_id = request.get('_order_id', 0)
+        
+        # Get or compute request ID (cache key)
+        request_id = request.get('_request_id')
+        if request_id is None:
+            # Only compute if not already present
+            from fastllm.cache import compute_request_hash
+            request_id = compute_request_hash(request)
+            request['_request_id'] = request_id
+
+        # Check if response is already cached
+        if self.cache_provider is not None:
+            try:
+                if await self.cache_provider.exists(request_id):
+                    cached_response = await self.cache_provider.get(request_id)
+                    wrapped = ResponseWrapper(cached_response, request_id, order_id)
                     if progress and wrapped.usage:
-                        progress.update(
-                            wrapped.usage.prompt_tokens,
-                            wrapped.usage.completion_tokens,
-                        )
+                        progress.update(wrapped.usage.prompt_tokens, wrapped.usage.completion_tokens, True)
                     return wrapped
-                except Exception:
-                    if attempt == self.retry_attempts - 1:
-                        if progress:
-                            progress.update(
-                                0, 0
-                            )  # Update progress even for failed requests
-                        raise
-                    await asyncio.sleep(self.retry_delay * (attempt + 1))
+            except Exception:
+                # If there's any error reading from cache, proceed with the actual request
+                pass
+
+        # Process request with retries
+        for attempt in range(self.retry_attempts):
+            try:
+                response = await self.provider.make_request(
+                    client,
+                    request,
+                    self.timeout,
+                )
+                # Create wrapper and update progress before caching
+                wrapped = ResponseWrapper(response, request_id, order_id)
+                if progress and wrapped.usage:
+                    progress.update(
+                        wrapped.usage.prompt_tokens,
+                        wrapped.usage.completion_tokens,
+                        False
+                    )
+                # Only cache after successful processing
+                if self.cache_provider is not None:
+                    try:
+                        await self.cache_provider.put(request_id, response)
+                    except Exception:
+                        # If caching fails, we can still return the response
+                        pass
+                return wrapped
+            except Exception:
+                if attempt == self.retry_attempts - 1:
+                    if progress:
+                        progress.update(0, 0, False)
+                    raise
+                await asyncio.sleep(self.retry_delay * (attempt + 1))
 
     async def _process_batch_async(
         self,
         batch: Union[list[dict[str, Any]], "RequestBatch"],
-    ) -> list[Union[ResponseWrapper[ResponseT], Exception]]:
+    ) -> list[ResponseWrapper[ResponseT]]:
         """Internal async implementation of batch processing."""
+        # Create semaphore for this batch processing run
+        semaphore = asyncio.Semaphore(self.concurrency)
+
         # Convert RequestBatch to list of requests if needed
         if isinstance(batch, RequestBatch):
             requests = batch.requests
         else:
-            # Add request IDs to raw request list
+            # Add request IDs and order IDs to raw request list
+            from fastllm.cache import compute_request_hash
             requests = []
             for i, request in enumerate(batch):
                 request = request.copy()  # Don't modify original request
-                request["_request_id"] = i  # Convert to string
+                request["_order_id"] = i
+                request["_request_id"] = compute_request_hash(request)  # Compute and store request ID
                 requests.append(request)
 
         # Create progress tracker if enabled
@@ -311,31 +373,41 @@ class RequestManager:
             else None
         )
 
+        async def process_request_with_semaphore(
+            client: httpx.AsyncClient,
+            request: dict[str, Any],
+            progress: Optional[ProgressTracker] = None,
+        ) -> ResponseWrapper[ResponseT]:
+            """Process a single request with semaphore control."""
+            async with semaphore:
+                return await self._process_request_async(client, request, progress)
+
         async def process_batch_chunk(
             client: httpx.AsyncClient, chunk: list[dict[str, Any]]
-        ) -> list[Union[ResponseWrapper[ResponseT], Exception]]:
+        ) -> list[ResponseWrapper[ResponseT]]:
             """Process a chunk of requests."""
             batch_tasks = [
-                self._process_request_async(client, req, tracker) for req in chunk
+                process_request_with_semaphore(client, req, tracker) for req in chunk
             ]
-            results = await asyncio.gather(*batch_tasks, return_exceptions=True)
-            return [(chunk[i]["_request_id"], r) for i, r in enumerate(results)]
+            results = await asyncio.gather(*batch_tasks)
+            return [(r._order_id, r) for r in results]
 
-        # Process requests in chunks based on concurrency
+        # Process requests in chunks based on calculated chunk size
+        chunk_size = self._calculate_chunk_size()
         all_results = []
         context = tracker if tracker else nullcontext()
 
         # Create a single client for the entire batch
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             with context:
-                for batch_start in range(0, len(requests), self.concurrency):
+                for batch_start in range(0, len(requests), chunk_size):
                     batch_requests = requests[
-                        batch_start : batch_start + self.concurrency
+                        batch_start : batch_start + chunk_size
                     ]
                     batch_results = await process_batch_chunk(client, batch_requests)
                     all_results.extend(batch_results)
 
-        # Sort responses by request ID and return just the responses
+        # Sort responses by order ID and return just the responses
         return [r for _, r in sorted(all_results, key=lambda x: x[0])]
 
 
@@ -368,8 +440,10 @@ class RequestBatch(AbstractContextManager):
         return len(self.requests)
 
     def _add_request(self, request: dict[str, Any]) -> None:
-        """Add a request with a sequential ID to maintain order."""
-        request["_request_id"] = self._request_counter
+        """Add a request with sequential IDs to maintain order and caching."""
+        from fastllm.cache import compute_request_hash
+        request["_order_id"] = self._request_counter
+        request["_request_id"] = compute_request_hash(request)  # Compute and store request ID
         self.requests.append(request)
         self._request_counter += 1
 
@@ -400,7 +474,7 @@ class RequestBatch(AbstractContextManager):
                 top_p: Optional[float] = 1.0,
                 n: Optional[int] = 1,
                 stop: Optional[Union[str, list[str]]] = None,
-                max_tokens: Optional[int] = None,
+                max_completion_tokens: Optional[int] = None,
                 presence_penalty: Optional[float] = 0.0,
                 frequency_penalty: Optional[float] = 0.0,
                 logit_bias: Optional[dict[str, float]] = None,
@@ -409,6 +483,7 @@ class RequestBatch(AbstractContextManager):
                 seed: Optional[int] = None,
                 tools: Optional[list[dict[str, Any]]] = None,
                 tool_choice: Optional[Union[str, dict[str, str]]] = None,
+                **kwargs: Any
             ) -> None:
                 """Add a chat completion request to the batch."""
                 request = {
@@ -418,7 +493,7 @@ class RequestBatch(AbstractContextManager):
                     "top_p": top_p,
                     "n": n,
                     "stop": stop,
-                    "max_tokens": max_tokens,
+                    "max_completion_tokens": max_completion_tokens,
                     "presence_penalty": presence_penalty,
                     "frequency_penalty": frequency_penalty,
                     "logit_bias": logit_bias,
@@ -427,6 +502,7 @@ class RequestBatch(AbstractContextManager):
                     "seed": seed,
                     "tools": tools,
                     "tool_choice": tool_choice,
+                    **kwargs,
                 }
                 # Remove None values to match OpenAI's behavior
                 request = {k: v for k, v in request.items() if v is not None}
