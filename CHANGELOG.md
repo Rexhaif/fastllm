@@ -18,11 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Request deduplication and response ordering
 - Configurable retry mechanism
 - Rich progress bar with detailed statistics
+- Support for existing asyncio event loops
+- Jupyter notebook compatibility
 
 ### Changed
 - Optimized request processing for better performance
 - Improved error handling and reporting
 - Enhanced request ID handling
+- Added compatibility with existing asyncio event loops
+- Fixed asyncio loop handling in Jupyter notebooks
 
 ### Fixed
 - Request ID validation and string conversion

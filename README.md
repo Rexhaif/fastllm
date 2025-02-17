@@ -44,9 +44,7 @@ Development dependencies:
 ## Quick Start
 
 ```python
-from fastllm.core import RequestBatch, RequestManager
-from fastllm.providers.openai import OpenAIProvider
-from fastllm.cache import InMemoryCache  # or DiskCache
+from fastllm import RequestBatch, RequestManager, OpenAIProvider, InMemoryCache
 
 # Create a provider
 provider = OpenAIProvider(
@@ -107,12 +105,47 @@ fastllm run conversations.json --api-key your-api-key --json-format --cache memo
 
 ## Advanced Usage
 
+### Async Support
+
+FastLLM can be used both synchronously and asynchronously, and works seamlessly in regular Python environments, async applications, and Jupyter notebooks:
+
+```python
+import asyncio
+from fastllm import RequestBatch, RequestManager, OpenAIProvider
+
+# Works in Jupyter notebooks
+provider = OpenAIProvider(api_key="your-api-key")
+manager = RequestManager(provider=provider)
+responses = manager.process_batch(batch)  # Just works!
+
+# Works in async applications
+async def process_requests():
+    provider = OpenAIProvider(api_key="your-api-key")
+    manager = RequestManager(provider=provider)
+    
+    with RequestBatch() as batch:
+        batch.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": "Hello!"}]
+        )
+    
+    responses = manager.process_batch(batch)
+    return responses
+
+# Run in existing event loop
+async def main():
+    responses = await process_requests()
+    print(responses)
+
+asyncio.run(main())
+```
+
 ### Caching Configuration
 
 FastLLM supports both in-memory and disk-based caching:
 
 ```python
-from fastllm.cache import InMemoryCache, DiskCache
+from fastllm import InMemoryCache, DiskCache
 
 # In-memory cache (faster, but cleared when process ends)
 cache = InMemoryCache()
@@ -130,8 +163,9 @@ cache = DiskCache(
 Create your own provider by inheriting from the base `Provider` class:
 
 ```python
-from fastllm.providers.base import Provider
+from fastllm import Provider
 from typing import Any
+import httpx
 
 class CustomProvider(Provider[YourResponseType]):
     def get_request_headers(self) -> dict[str, str]:

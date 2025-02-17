@@ -275,6 +275,7 @@ class RequestManager:
 
         This is the main synchronous API endpoint that users should call.
         Internally it uses asyncio to handle requests concurrently.
+        Works in both regular Python environments and Jupyter notebooks.
 
         Args:
             batch: Either a RequestBatch object or a list of request dictionaries
@@ -282,7 +283,17 @@ class RequestManager:
         Returns:
             List of responses in the same order as the requests
         """
-        return asyncio.run(self._process_batch_async(batch))
+        try:
+            loop = asyncio.get_running_loop()
+            if loop.is_running():
+                # We're in a Jupyter notebook or similar environment
+                # where the loop is already running
+                import nest_asyncio
+                nest_asyncio.apply()
+            return loop.run_until_complete(self._process_batch_async(batch))
+        except RuntimeError:
+            # No event loop running, create a new one
+            return asyncio.run(self._process_batch_async(batch))
 
     async def _process_request_async(
         self,
