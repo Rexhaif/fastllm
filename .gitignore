@@ -43,3 +43,4 @@ htmlcov/
 .ruff_cache/
 .mypy_cache/ 
 cache/
+uv.lock
