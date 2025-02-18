@@ -20,13 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rich progress bar with detailed statistics
 - Support for existing asyncio event loops
 - Jupyter notebook compatibility
+- Request ID (cache key) return from batch creation methods
 
 ### Changed
 - Optimized request processing for better performance
 - Improved error handling and reporting
-- Enhanced request ID handling
+- Enhanced request ID handling and exposure
 - Added compatibility with existing asyncio event loops
 - Fixed asyncio loop handling in Jupyter notebooks
+- Made request IDs accessible to users for cache management
 
 ### Fixed
 - Request ID validation and string conversion

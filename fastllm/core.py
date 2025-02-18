@@ -450,13 +450,22 @@ class RequestBatch(AbstractContextManager):
     def __len__(self):
         return len(self.requests)
 
-    def _add_request(self, request: dict[str, Any]) -> None:
-        """Add a request with sequential IDs to maintain order and caching."""
+    def _add_request(self, request: dict[str, Any]) -> str:
+        """Add a request with sequential IDs to maintain order and caching.
+        
+        Args:
+            request: The request dictionary to add
+            
+        Returns:
+            str: The request ID (cache key) for this request
+        """
         from fastllm.cache import compute_request_hash
         request["_order_id"] = self._request_counter
-        request["_request_id"] = compute_request_hash(request)  # Compute and store request ID
+        request_id = compute_request_hash(request)  # Compute request ID
+        request["_request_id"] = request_id  # Store it in request
         self.requests.append(request)
         self._request_counter += 1
+        return request_id
 
     @property
     def chat(self):
@@ -495,8 +504,30 @@ class RequestBatch(AbstractContextManager):
                 tools: Optional[list[dict[str, Any]]] = None,
                 tool_choice: Optional[Union[str, dict[str, str]]] = None,
                 **kwargs: Any
-            ) -> None:
-                """Add a chat completion request to the batch."""
+            ) -> str:
+                """Add a chat completion request to the batch.
+                
+                Args:
+                    model: The model to use for completion
+                    messages: The messages to generate a completion for
+                    temperature: Sampling temperature (0-2)
+                    top_p: Nucleus sampling parameter (0-1)
+                    n: Number of completions to generate
+                    stop: Stop sequences to use
+                    max_completion_tokens: Maximum tokens to generate
+                    presence_penalty: Presence penalty (-2 to 2)
+                    frequency_penalty: Frequency penalty (-2 to 2)
+                    logit_bias: Token biases to use
+                    user: User identifier
+                    response_format: Format for the response
+                    seed: Random seed for reproducibility
+                    tools: List of tools available to the model
+                    tool_choice: Tool choice configuration
+                    **kwargs: Additional provider-specific parameters
+
+                Returns:
+                    str: The request ID (caching key) for this request
+                """
                 request = {
                     "model": model,
                     "messages": messages,
@@ -517,4 +548,5 @@ class RequestBatch(AbstractContextManager):
                 }
                 # Remove None values to match OpenAI's behavior
                 request = {k: v for k, v in request.items() if v is not None}
-                self.batch._add_request(request)
+                # Add request and get the request ID
+                return self.batch._add_request(request)

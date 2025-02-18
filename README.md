@@ -65,10 +65,12 @@ manager = RequestManager(
 )
 
 # Create a batch of requests
+request_ids = []  # Store request IDs for later use
 with RequestBatch() as batch:
     # Add requests to the batch
     for i in range(10):
-        batch.chat.completions.create(
+        # create() returns the request ID (caching key)
+        request_id = batch.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[{
                 "role": "user",
@@ -77,16 +79,22 @@ with RequestBatch() as batch:
             temperature=0.7,
             include_reasoning=True,  # Optional: include model reasoning
         )
+        request_ids.append(request_id)
 
 # Process the batch
 responses = manager.process_batch(batch)
 
 # Process responses
-for response in responses:
+for request_id, response in zip(request_ids, responses):
     if isinstance(response, Exception):
-        print(f"Error: {response}")
+        print(f"Request {request_id} failed: {response}")
     else:
-        print(f"Response: {response.response.choices[0].message.content}")
+        print(f"Request {request_id}: {response.response.choices[0].message.content}")
+        
+# You can use request IDs to check cache status
+for request_id in request_ids:
+    is_cached = await cache.exists(request_id)
+    print(f"Request {request_id} is {'cached' if is_cached else 'not cached'}")
 ```
 
 ## Command Line Interface
@@ -142,10 +150,18 @@ asyncio.run(main())
 
 ### Caching Configuration
 
-FastLLM supports both in-memory and disk-based caching:
+FastLLM supports both in-memory and disk-based caching, with request IDs serving as cache keys:
 
 ```python
-from fastllm import InMemoryCache, DiskCache
+from fastllm import InMemoryCache, DiskCache, RequestBatch
+
+# Create a batch and get request IDs
+with RequestBatch() as batch:
+    request_id = batch.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=[{"role": "user", "content": "Hello!"}]
+    )
+    print(f"Request ID (cache key): {request_id}")
 
 # In-memory cache (faster, but cleared when process ends)
 cache = InMemoryCache()
@@ -156,6 +172,13 @@ cache = DiskCache(
     ttl=3600,  # Cache TTL in seconds
     size_limit=int(2e9)  # 2GB size limit
 )
+
+# Check if a response is cached
+is_cached = await cache.exists(request_id)
+
+# Get cached response if available
+if is_cached:
+    response = await cache.get(request_id)
 ```
 
 ### Custom Providers
