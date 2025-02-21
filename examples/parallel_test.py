@@ -10,6 +10,7 @@ import typer
 from openai.types.chat import ChatCompletion
 from rich.console import Console
 from rich.panel import Panel
+from dotenv import load_dotenv
 
 from fastllm.core import RequestBatch, RequestManager, ResponseWrapper
 from fastllm.providers.openai import OpenAIProvider
@@ -23,8 +24,12 @@ DEFAULT_OUTPUT = Path("results.json")
 
 app = typer.Typer()
 
+load_dotenv()
 
-def process_response(response: ResponseWrapper[ChatCompletion], index: int) -> dict[str, Any]:
+
+def process_response(
+    response: ResponseWrapper[ChatCompletion], index: int
+) -> dict[str, Any]:
     """Process a response into a serializable format."""
     return {
         "index": index,
@@ -90,7 +95,7 @@ def run_test(
         cache_provider = DiskCache(
             directory="./cache",
             ttl=cache_ttl,
-            size_limit=int(2e9)  # 2GB size limit
+            size_limit=int(2e9),  # 2GB size limit
         )
 
     provider = OpenAIProvider(
@@ -234,9 +239,9 @@ def main(
     ),
 ) -> None:
     """Run parallel request test."""
-    api_key = os.getenv("OPENROUTER_API_KEY")
+    api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        typer.echo("Error: OPENROUTER_API_KEY not set")
+        typer.echo("Error: OPENAI_API_KEY not set")
         raise typer.Exit(1)
 
     run_test(
