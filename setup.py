@@ -1,0 +1,62 @@
+"""FastLLM setup configuration."""
+
+from setuptools import setup, find_packages
+
+setup(
+    name="fastllm",
+    version="0.1.0",
+    description="High-performance parallel LLM API request tool with caching and multiple provider support",
+    author="Daniil Larionov",
+    author_email="rexhaif@gmail.com",
+    url="https://github.com/rexhaif/fastllm",
+    packages=find_packages(),
+    python_requires=">=3.9,<4.0",
+    install_requires=[
+        "httpx>=0.27.0",
+        "pydantic>=2.0.0",
+        "rich>=13.0.0",
+        "diskcache>=5.6.0",
+        "anyio>=4.0.0",
+        "typing-extensions>=4.8.0",
+        "tqdm>=4.65.0",
+        "nest-asyncio>=1.5.8",
+        "openai>=1.0.0",
+        "xxhash>=3.0.0",
+        "ipywidgets>=8.0.0",
+        "tiktoken>=0.6.0",
+    ],
+    extras_require={
+        "dev": [
+            "ruff>=0.3.0",
+            "pytest>=8.0.0",
+            "pytest-asyncio>=0.23.0",
+            "pytest-cov>=4.1.0",
+            "black>=24.0.0",
+            "coverage>=7.4.0",
+        ],
+    },
+    classifiers=[
+        "Development Status :: 4 - Beta",
+        "Environment :: Console",
+        "Framework :: AsyncIO",
+        "Framework :: Jupyter",
+        "Intended Audience :: Developers",
+        "Intended Audience :: Science/Research",
+        "License :: OSI Approved :: MIT License",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Topic :: Software Development :: Libraries :: Python Modules",
+        "Topic :: Scientific/Engineering :: Artificial Intelligence",
+        "Typing :: Typed",
+    ],
+    keywords=["llm", "ai", "openai", "parallel", "caching", "api", "async", "batch"],
+    project_urls={
+        "Homepage": "https://github.com/rexhaif/fastllm",
+        "Repository": "https://github.com/rexhaif/fastllm",
+        "Documentation": "https://github.com/rexhaif/fastllm/tree/main/docs",
+    },
+) 

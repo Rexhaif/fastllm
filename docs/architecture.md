@@ -1,6 +1,6 @@
 # FastLLM Architecture
 
-FastLLM follows a modular architecture designed for extensibility, performance, and ease of use. This document outlines the key architectural components and their interactions.
+FastLLM is a Python library designed to provide a fast, efficient, and flexible interface for working with Large Language Models (LLMs). This document outlines the key architectural components and their interactions.
 
 ## System Architecture
 
@@ -23,58 +23,147 @@ FastLLM follows a modular architecture designed for extensibility, performance, 
 
 ## Core Components
 
-### 1. RequestManager
+### 1. Message and Request Models (`core.py`)
+- `Message`: Represents a single message in a conversation
+  - Supports system, user, assistant, function, and tool roles
+  - Handles function calls and tool calls
+  - Flexible content types (string or structured data)
 
-The RequestManager is the central coordinator that:
-- Processes batches of requests concurrently
-- Manages concurrency limits and chunking
-- Coordinates between providers and cache
-- Handles progress tracking and statistics
+- `LLMRequest`: Base model for LLM requests
+  - Provider-agnostic request format
+  - Configurable parameters (temperature, tokens, penalties)
+  - Support for streaming responses
+  - Factory methods for creating from prompts or messages
 
-Key features:
-- Dynamic chunk size calculation
-- Semaphore-based concurrency control
-- Automatic retry mechanism
+### 2. Response Handling (`core.py`)
+- `ResponseWrapper[ResponseT]`: Generic wrapper for provider responses
+  - Maintains request ordering
+  - Tracks token usage statistics
+  - Provider-agnostic interface
+
+- `TokenStats`: Comprehensive token usage tracking
+  - Prompt and completion token counts
+  - Rate limiting statistics
+  - Cache hit ratio monitoring
+  - Performance metrics (tokens/second)
+
+### 3. Progress Tracking (`core.py`)
+- `ProgressTracker`: Rich progress display
+  - Real-time token usage statistics
+  - Cache hit/miss ratios
+  - ETA and time elapsed
+  - Rate limit saturation monitoring
+
+### 4. Cache System (`cache.py`)
+- `CacheProvider`: Abstract base class for caching
+  - Async interface for all operations
+  - Consistent error handling
+
+- Implementations:
+  - `InMemoryCache`: Fast, non-persistent cache
+  - `DiskCache`: Persistent storage with TTL support
+    - Thread-safe operations
+    - JSON serialization
+    - Configurable directory and options
+
+- `compute_request_hash`: Consistent request hashing
+  - Deterministic hash generation
+  - Handles core and extra parameters
+  - Excludes internal tracking fields
+
+### 5. Provider System (`providers/`)
+- `Provider[ResponseT]`: Generic base class
+  - Type-safe response handling
+  - Standardized HTTP headers
+  - Configurable API endpoints
+
+- `OpenAIProvider`: OpenAI API implementation
+  - ChatCompletion support
+  - Organization handling
+  - Custom header management
+
+- `OpenAIRequest`: OpenAI-specific request model
+  - Message format conversion
+  - Extra parameter handling
+  - Function and tool call support
+
+## Key Features
+
+### 1. Parallel Processing
+- Async/await throughout
+- Efficient request batching
+- Concurrent API calls
 - Progress monitoring
 
-### 2. Provider System
+### 2. Caching
+- Multiple cache backends
+- TTL support
+- Async operations
+- Thread-safe implementation
 
-The provider system is built around a base Provider class that:
-- Defines the interface for LLM API providers
-- Handles authentication and headers
-- Manages API communication
-- Processes responses
+### 3. Rate Limiting
+- Token-based limits
+- Request frequency limits
+- Window-based tracking
+- Saturation monitoring
 
-Components:
-- `Provider` (Base class)
-- `OpenAIProvider` (Implementation)
-- Request/Response models
+### 4. Error Handling
+- Consistent error types
+- Graceful degradation
+- Detailed error messages
+- Retry mechanisms
 
-### 3. Caching System
+## Configuration Points
 
-The caching system provides:
-- Multiple cache implementations
-- Consistent request hashing
-- Async cache operations
-- Optional TTL support
+The system can be configured through:
+1. Provider settings
+   - API keys and endpoints
+   - Organization IDs
+   - Custom headers
 
-Implementations:
-- `InMemoryCache`: Fast, non-persistent storage
-- `DiskCache`: Persistent storage with TTL support
+2. Cache settings
+   - Backend selection
+   - TTL configuration
+   - Storage directory
+   - Serialization options
 
-### 4. Request/Response Models
+3. Request parameters
+   - Model selection
+   - Temperature and sampling
+   - Token limits
+   - Response streaming
 
-Core models that handle:
-- Request validation and normalization
-- Message formatting
-- Response parsing
-- Usage statistics
+4. Rate limiting
+   - Token rate limits
+   - Request frequency limits
+   - Window sizes
+   - Saturation thresholds
 
-Key models:
-- `LLMRequest`
-- `LLMResponse`
-- `Message`
-- `TokenStats`
+## Best Practices
+
+1. **Error Handling**
+   - Use try-except blocks for cache operations
+   - Handle API errors gracefully
+   - Provide meaningful error messages
+   - Implement proper cleanup
+
+2. **Performance**
+   - Use appropriate cache backend
+   - Configure batch sizes
+   - Monitor rate limits
+   - Track token usage
+
+3. **Security**
+   - Secure API key handling
+   - Safe cache storage
+   - Input validation
+   - Response sanitization
+
+4. **Maintenance**
+   - Regular cache cleanup
+   - Monitor disk usage
+   - Update API versions
+   - Track deprecations
 
 ## Data Flow
 
@@ -124,16 +213,6 @@ Key models:
    - Clear type hints
    - Comprehensive logging
 
-## Configuration Points
-
-The system can be configured through:
-- Concurrency limits
-- Chunk sizes
-- Timeout settings
-- Retry policies
-- Cache settings
-- Provider-specific options
-
 ## Error Handling
 
 The system implements comprehensive error handling:
@@ -144,3 +223,27 @@ The system implements comprehensive error handling:
 - Invalid requests
 
 Each component includes appropriate error handling and propagation to ensure system stability and reliability.
+
+## Testing Strategy
+
+The test suite is organized by component:
+
+1. **Core Tests** (`test_core.py`):
+   - Request/Response model validation
+   - RequestManager functionality
+   - Token statistics tracking
+
+2. **Cache Tests** (`test_cache.py`):
+   - Cache implementation verification
+   - Request hashing consistency
+   - Concurrent access handling
+
+3. **Provider Tests** (`test_providers.py`):
+   - Provider interface compliance
+   - API communication
+   - Response parsing
+
+4. **Integration Tests**:
+   - End-to-end request flow
+   - Rate limiting behavior
+   - Error handling scenarios

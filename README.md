@@ -10,13 +10,29 @@ High-performance parallel LLM API request tool with support for multiple provide
 - Support for multiple LLM providers (OpenAI, OpenRouter, etc.)
 - OpenAI-style API for request batching
 - Retry mechanism with configurable attempts and delays
-- Rich CLI interface
 - Request deduplication and response ordering
 
 ## Installation
 
+First, install uv if you haven't already:
 ```bash
-pip install fastllm
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Then install fastllm:
+```bash
+uv pip install fastllm
+```
+
+For development:
+```bash
+# Clone the repository
+git clone https://github.com/rexhaif/fastllm
+cd fastllm
+
+# Create a virtual environment and install dependencies
+uv venv
+uv pip install -e ".[dev]"
 ```
 
 ## Dependencies
@@ -26,7 +42,6 @@ FastLLM requires Python 3.9 or later and depends on the following packages:
 - `httpx` (^0.27.2) - For async HTTP requests
 - `pydantic` (^2.10.6) - For data validation and settings management
 - `rich` (^13.9.4) - For beautiful terminal output and progress bars
-- `typer` (^0.9.4) - For the command-line interface
 - `diskcache` (^5.6.3) - For persistent disk caching
 - `asyncio` (^3.4.3) - For asynchronous operations
 - `anyio` (^4.8.0) - For async I/O operations
@@ -40,6 +55,28 @@ Development dependencies:
 - `pytest-cov` (^4.1.0) - For test coverage
 - `black` (^24.10.0) - For code formatting
 - `coverage` (^7.6.10) - For code coverage reporting
+
+## Development
+
+The project uses [just](https://github.com/casey/just) for task automation and [uv](https://github.com/astral/uv) for dependency management.
+
+Common tasks:
+```bash
+# Install dependencies
+just install
+
+# Run tests
+just test
+
+# Format code
+just format
+
+# Run linting
+just lint
+
+# Clean up cache files
+just clean
+```
 
 ## Quick Start
 
@@ -95,20 +132,6 @@ for request_id, response in zip(request_ids, responses):
 for request_id in request_ids:
     is_cached = await cache.exists(request_id)
     print(f"Request {request_id} is {'cached' if is_cached else 'not cached'}")
-```
-
-## Command Line Interface
-
-Process requests from a file:
-
-```bash
-fastllm run prompts.txt --api-key your-api-key --model gpt-3.5-turbo --cache disk
-```
-
-Process JSON conversations:
-
-```bash
-fastllm run conversations.json --api-key your-api-key --json-format --cache memory
 ```
 
 ## Advanced Usage

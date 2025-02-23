@@ -14,7 +14,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Multiple provider support (OpenAI, OpenRouter)
 - Request batching with OpenAI-style API
 - Progress tracking and statistics
-- CLI interface for file-based processing
 - Request deduplication and response ordering
 - Configurable retry mechanism
 - Rich progress bar with detailed statistics

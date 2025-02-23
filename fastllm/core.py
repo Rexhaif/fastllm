@@ -60,6 +60,10 @@ class TokenStats:
     requests_completed: int = 0
     cache_hits: int = 0  # Track cache hits
     start_time: float = 0.0
+    token_limit: Optional[int] = None  # Rate limit for tokens per minute
+    request_limit: Optional[int] = None  # Rate limit for requests per minute
+    window_tokens: int = 0  # Tokens in current rate limit window
+    window_requests: int = 0  # Requests in current rate limit window
 
     @property
     def elapsed_time(self) -> float:
@@ -83,6 +87,22 @@ class TokenStats:
             return 0.0
         return self.cache_hits / self.requests_completed
 
+    @property
+    def token_saturation(self) -> float:
+        """Calculate token usage saturation (0.0 to 1.0)."""
+        if not self.token_limit or self.elapsed_time == 0:
+            return 0.0
+        tokens_per_minute = (self.window_tokens / self.elapsed_time) * 60
+        return tokens_per_minute / self.token_limit
+
+    @property
+    def request_saturation(self) -> float:
+        """Calculate request rate saturation (0.0 to 1.0)."""
+        if not self.request_limit or self.elapsed_time == 0:
+            return 0.0
+        requests_per_minute = (self.window_requests / self.elapsed_time) * 60
+        return requests_per_minute / self.request_limit
+
     def update(self, prompt_tokens: int, completion_tokens: int, is_cache_hit: bool = False) -> None:
         """Update token statistics."""
         self.prompt_tokens += prompt_tokens
@@ -91,6 +111,10 @@ class TokenStats:
         self.requests_completed += 1
         if is_cache_hit:
             self.cache_hits += 1
+        else:
+            # Only update window stats for non-cache hits
+            self.window_tokens += prompt_tokens + completion_tokens
+            self.window_requests += 1
 
 
 class ProgressTracker:
@@ -255,7 +279,7 @@ class RequestManager:
         self.retry_attempts = retry_attempts
         self.retry_delay = retry_delay
         self.show_progress = show_progress
-        self.cache_provider = caching_provider
+        self.cache = caching_provider
 
     def _calculate_chunk_size(self) -> int:
         """Calculate optimal chunk size based on concurrency.
@@ -301,29 +325,34 @@ class RequestManager:
         request: dict[str, Any],
         progress: Optional[ProgressTracker] = None,
     ) -> ResponseWrapper[ResponseT]:
+        """Process a single request with caching support."""
         # Get order ID and request ID from request
         order_id = request.get('_order_id', 0)
-        
-        # Get or compute request ID (cache key)
         request_id = request.get('_request_id')
+        
         if request_id is None:
             # Only compute if not already present
             from fastllm.cache import compute_request_hash
             request_id = compute_request_hash(request)
             request['_request_id'] = request_id
 
-        # Check if response is already cached
-        if self.cache_provider is not None:
+        # Check cache first if available
+        if self.cache is not None:
             try:
-                if await self.cache_provider.exists(request_id):
-                    cached_response = await self.cache_provider.get(request_id)
+                if await self.cache.exists(request_id):
+                    cached_response = await self.cache.get(request_id)
                     wrapped = ResponseWrapper(cached_response, request_id, order_id)
                     if progress and wrapped.usage:
-                        progress.update(wrapped.usage.prompt_tokens, wrapped.usage.completion_tokens, True)
+                        # Update progress with cache hit
+                        progress.update(
+                            wrapped.usage.prompt_tokens,
+                            wrapped.usage.completion_tokens,
+                            is_cache_hit=True
+                        )
                     return wrapped
-            except Exception:
-                # If there's any error reading from cache, proceed with the actual request
-                pass
+            except Exception as e:
+                # Log cache read error but continue with actual request
+                print(f"Cache read error: {str(e)}")
 
         # Process request with retries
         for attempt in range(self.retry_attempts):
@@ -333,26 +362,46 @@ class RequestManager:
                     request,
                     self.timeout,
                 )
-                # Create wrapper and update progress before caching
+                
+                # Get status from either attribute or dict
+                status = (
+                    response.get('status')
+                    if isinstance(response, dict)
+                    else getattr(response, 'status', 200)
+                )
+                print(f"DEBUG: Response received with status {status}")
+                
+                # Check status before creating wrapper
+                if status not in range(200, 300):
+                    print(f"DEBUG: Failed response with status {status}, not caching")
+                    wrapped = ResponseWrapper(response, request_id, order_id)
+                    return wrapped
+
+                # Create wrapper and update progress
                 wrapped = ResponseWrapper(response, request_id, order_id)
                 if progress and wrapped.usage:
                     progress.update(
                         wrapped.usage.prompt_tokens,
                         wrapped.usage.completion_tokens,
-                        False
+                        is_cache_hit=False
                     )
-                # Only cache after successful processing
-                if self.cache_provider is not None:
+
+                # Cache successful response
+                if self.cache is not None:
                     try:
-                        await self.cache_provider.put(request_id, response)
-                    except Exception:
-                        # If caching fails, we can still return the response
-                        pass
+                        print(f"DEBUG: Caching successful response with status {status}")
+                        await self.cache.put(request_id, response)
+                    except Exception as e:
+                        # Log cache write error but continue
+                        print(f"Cache write error: {str(e)}")
+                
                 return wrapped
-            except Exception:
+
+            except Exception as e:
                 if attempt == self.retry_attempts - 1:
                     if progress:
-                        progress.update(0, 0, False)
+                        # Update progress even for failed requests
+                        progress.update(0, 0, is_cache_hit=False)
                     raise
                 await asyncio.sleep(self.retry_delay * (attempt + 1))
 
@@ -368,13 +417,14 @@ class RequestManager:
         if isinstance(batch, RequestBatch):
             requests = batch.requests
         else:
-            # Add request IDs and order IDs to raw request list
-            from fastllm.cache import compute_request_hash
+            # Handle raw request list - compute request IDs and add order IDs
             requests = []
             for i, request in enumerate(batch):
                 request = request.copy()  # Don't modify original request
+                if "_request_id" not in request:
+                    from fastllm.cache import compute_request_hash
+                    request["_request_id"] = compute_request_hash(request)
                 request["_order_id"] = i
-                request["_request_id"] = compute_request_hash(request)  # Compute and store request ID
                 requests.append(request)
 
         # Create progress tracker if enabled
@@ -421,25 +471,30 @@ class RequestManager:
         # Sort responses by order ID and return just the responses
         return [r for _, r in sorted(all_results, key=lambda x: x[0])]
 
+    async def _make_provider_request(
+        self,
+        client: Optional[httpx.AsyncClient],
+        request: LLMRequest,
+    ) -> LLMResponse:
+        """Make a single request to the provider."""
+        try:
+            response_dict = await self.provider.make_request(client, request, self.timeout)
+            # Add required fields
+            response_dict["request_id"] = id(request)
+            response_dict["provider"] = request.provider
+            response_dict["raw_response"] = {"provider_response": response_dict.copy()}
+            return LLMResponse.from_dict(response_dict)
+        except Exception as e:
+            # Re-raise provider errors as is
+            raise e
+
 
 class RequestBatch(AbstractContextManager):
-    """A batch of requests that mimics OpenAI's API style.
-
-    Usage:
-        with RequestBatch() as batch:
-            # Add requests to the batch
-            batch.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": "Hello!"}]
-            )
-
-        # Process the batch synchronously
-        responses = manager.process_batch(batch)
-    """
+    """A batch of requests to be processed together."""
 
     def __init__(self):
         self.requests = []
-        self._request_counter = 0
+        self._next_order_id = 0
 
     def __enter__(self):
         return self
@@ -451,25 +506,40 @@ class RequestBatch(AbstractContextManager):
         return len(self.requests)
 
     def _add_request(self, request: dict[str, Any]) -> str:
-        """Add a request with sequential IDs to maintain order and caching.
+        """Add a request to the batch and return its request ID (cache key).
         
         Args:
-            request: The request dictionary to add
+            request: The request to add to the batch
             
         Returns:
             str: The request ID (cache key) for this request
         """
-        from fastllm.cache import compute_request_hash
-        request["_order_id"] = self._request_counter
-        request_id = compute_request_hash(request)  # Compute request ID
-        request["_request_id"] = request_id  # Store it in request
+        # This method is deprecated and only kept for backward compatibility
+        # All request creation should go through chat.completions.create
+        if "_request_id" not in request:
+            # Compute request ID for caching if not already present
+            from fastllm.cache import compute_request_hash
+            request["_request_id"] = compute_request_hash(request)
+        
+        # Add order ID for maintaining sequence
+        request["_order_id"] = self._next_order_id
+        self._next_order_id += 1
+        
+        # Add to batch
         self.requests.append(request)
-        self._request_counter += 1
-        return request_id
+        return request["_request_id"]
+
+    @classmethod
+    def merge(cls, batches: list["RequestBatch"]) -> "RequestBatch":
+        """Merge multiple request batches into a single batch."""
+        merged = cls()
+        for batch in batches:
+            merged.requests.extend(batch.requests)
+        return merged
 
     @property
     def chat(self):
-        """Access to chat completions API."""
+        """Access chat completion methods."""
         return self.Chat(self)
 
     class Chat:
@@ -526,7 +596,7 @@ class RequestBatch(AbstractContextManager):
                     **kwargs: Additional provider-specific parameters
 
                 Returns:
-                    str: The request ID (caching key) for this request
+                    str: The request ID (cache key) for this request
                 """
                 request = {
                     "model": model,
@@ -546,7 +616,33 @@ class RequestBatch(AbstractContextManager):
                     "tool_choice": tool_choice,
                     **kwargs,
                 }
+                
+                # Handle default values consistently:
+                # If a parameter is None and has a non-None default, use the default
+                defaults = {
+                    "temperature": 0.7,
+                    "top_p": 1.0,
+                    "n": 1,
+                    "presence_penalty": 0.0,
+                    "frequency_penalty": 0.0,
+                }
+                
+                for key, default in defaults.items():
+                    if key in request and request[key] is None:
+                        request[key] = default
+                
                 # Remove None values to match OpenAI's behavior
                 request = {k: v for k, v in request.items() if v is not None}
-                # Add request and get the request ID
-                return self.batch._add_request(request)
+                
+                # Compute request_id at creation time
+                from fastllm.cache import compute_request_hash
+                request["_request_id"] = compute_request_hash(request)
+                
+                # Add to batch and return the request ID
+                self.batch.requests.append(request)
+                
+                # Set order ID
+                request["_order_id"] = self.batch._next_order_id
+                self.batch._next_order_id += 1
+                
+                return request["_request_id"]
