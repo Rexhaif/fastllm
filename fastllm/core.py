@@ -60,6 +60,10 @@ class TokenStats:
     requests_completed: int = 0
     cache_hits: int = 0  # Track cache hits
     start_time: float = 0.0
+    token_limit: Optional[int] = None  # Rate limit for tokens per minute
+    request_limit: Optional[int] = None  # Rate limit for requests per minute
+    window_tokens: int = 0  # Tokens in current rate limit window
+    window_requests: int = 0  # Requests in current rate limit window
 
     @property
     def elapsed_time(self) -> float:
@@ -83,6 +87,22 @@ class TokenStats:
             return 0.0
         return self.cache_hits / self.requests_completed
 
+    @property
+    def token_saturation(self) -> float:
+        """Calculate token usage saturation (0.0 to 1.0)."""
+        if not self.token_limit or self.elapsed_time == 0:
+            return 0.0
+        tokens_per_minute = (self.window_tokens / self.elapsed_time) * 60
+        return tokens_per_minute / self.token_limit
+
+    @property
+    def request_saturation(self) -> float:
+        """Calculate request rate saturation (0.0 to 1.0)."""
+        if not self.request_limit or self.elapsed_time == 0:
+            return 0.0
+        requests_per_minute = (self.window_requests / self.elapsed_time) * 60
+        return requests_per_minute / self.request_limit
+
     def update(self, prompt_tokens: int, completion_tokens: int, is_cache_hit: bool = False) -> None:
         """Update token statistics."""
         self.prompt_tokens += prompt_tokens
@@ -91,6 +111,10 @@ class TokenStats:
         self.requests_completed += 1
         if is_cache_hit:
             self.cache_hits += 1
+        else:
+            # Only update window stats for non-cache hits
+            self.window_tokens += prompt_tokens + completion_tokens
+            self.window_requests += 1
 
 
 class ProgressTracker:
@@ -255,7 +279,7 @@ class RequestManager:
         self.retry_attempts = retry_attempts
         self.retry_delay = retry_delay
         self.show_progress = show_progress
-        self.cache_provider = caching_provider
+        self.cache = caching_provider
 
     def _calculate_chunk_size(self) -> int:
         """Calculate optimal chunk size based on concurrency.
@@ -313,10 +337,10 @@ class RequestManager:
             request['_request_id'] = request_id
 
         # Check if response is already cached
-        if self.cache_provider is not None:
+        if self.cache is not None:
             try:
-                if await self.cache_provider.exists(request_id):
-                    cached_response = await self.cache_provider.get(request_id)
+                if await self.cache.exists(request_id):
+                    cached_response = await self.cache.get(request_id)
                     wrapped = ResponseWrapper(cached_response, request_id, order_id)
                     if progress and wrapped.usage:
                         progress.update(wrapped.usage.prompt_tokens, wrapped.usage.completion_tokens, True)
@@ -342,9 +366,9 @@ class RequestManager:
                         False
                     )
                 # Only cache after successful processing
-                if self.cache_provider is not None:
+                if self.cache is not None:
                     try:
-                        await self.cache_provider.put(request_id, response)
+                        await self.cache.put(request_id, response)
                     except Exception:
                         # If caching fails, we can still return the response
                         pass
@@ -421,25 +445,30 @@ class RequestManager:
         # Sort responses by order ID and return just the responses
         return [r for _, r in sorted(all_results, key=lambda x: x[0])]
 
+    async def _make_provider_request(
+        self,
+        client: Optional[httpx.AsyncClient],
+        request: LLMRequest,
+    ) -> LLMResponse:
+        """Make a single request to the provider."""
+        try:
+            response_dict = await self.provider.make_request(client, request, self.timeout)
+            # Add required fields
+            response_dict["request_id"] = id(request)
+            response_dict["provider"] = request.provider
+            response_dict["raw_response"] = {"provider_response": response_dict.copy()}
+            return LLMResponse.from_dict(response_dict)
+        except Exception as e:
+            # Re-raise provider errors as is
+            raise e
+
 
 class RequestBatch(AbstractContextManager):
-    """A batch of requests that mimics OpenAI's API style.
-
-    Usage:
-        with RequestBatch() as batch:
-            # Add requests to the batch
-            batch.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": "Hello!"}]
-            )
-
-        # Process the batch synchronously
-        responses = manager.process_batch(batch)
-    """
+    """A batch of requests to be processed together."""
 
     def __init__(self):
         self.requests = []
-        self._request_counter = 0
+        self._next_id = 0
 
     def __enter__(self):
         return self
@@ -451,25 +480,23 @@ class RequestBatch(AbstractContextManager):
         return len(self.requests)
 
     def _add_request(self, request: dict[str, Any]) -> str:
-        """Add a request with sequential IDs to maintain order and caching.
-        
-        Args:
-            request: The request dictionary to add
-            
-        Returns:
-            str: The request ID (cache key) for this request
-        """
-        from fastllm.cache import compute_request_hash
-        request["_order_id"] = self._request_counter
-        request_id = compute_request_hash(request)  # Compute request ID
-        request["_request_id"] = request_id  # Store it in request
+        """Add a request to the batch and return its ID."""
+        request_id = str(self._next_id)
+        self._next_id += 1
         self.requests.append(request)
-        self._request_counter += 1
         return request_id
+
+    @classmethod
+    def merge(cls, batches: list["RequestBatch"]) -> "RequestBatch":
+        """Merge multiple request batches into a single batch."""
+        merged = cls()
+        for batch in batches:
+            merged.requests.extend(batch.requests)
+        return merged
 
     @property
     def chat(self):
-        """Access to chat completions API."""
+        """Access chat completion methods."""
         return self.Chat(self)
 
     class Chat:

@@ -93,9 +93,16 @@ class DiskCache(CacheProvider):
             directory: Directory where cache files will be stored
             ttl: Time to live in seconds for cached items (None means no expiration)
             **cache_options: Additional options to pass to diskcache.Cache
+            
+        Raises:
+            OSError: If the directory is invalid or cannot be created
         """
-        self._cache = Cache(directory, **cache_options)
-        self._ttl = ttl
+        try:
+            self._cache = Cache(directory, **cache_options)
+            self._ttl = ttl
+        except Exception as e:
+            # Convert any cache initialization error to OSError
+            raise OSError(f"Failed to initialize disk cache: {str(e)}")
 
     async def _run_in_executor(self, func, *args):
         """Run a blocking cache operation in the default executor."""
@@ -104,24 +111,45 @@ class DiskCache(CacheProvider):
 
     async def exists(self, key: str) -> bool:
         """Check if a key exists in the cache."""
-        # Use the internal __contains__ method which is faster than get
-        return await self._run_in_executor(self._cache.__contains__, key)
+        try:
+            # Use the internal __contains__ method which is faster than get
+            return await self._run_in_executor(self._cache.__contains__, key)
+        except Exception as e:
+            raise OSError(f"Failed to check cache key: {str(e)}")
 
     async def get(self, key: str):
         """Get a value from the cache."""
-        value = await self._run_in_executor(self._cache.get, key)
-        if value is None:  # diskcache returns None for missing keys
-            raise KeyError(f"Cache for key {key} does not exist")
-        return value
+        try:
+            value = await self._run_in_executor(self._cache.get, key)
+            if value is None:  # diskcache returns None for missing keys
+                raise KeyError(f"Cache for key {key} does not exist")
+            return value
+        except Exception as e:
+            if isinstance(e, KeyError):
+                raise
+            raise OSError(f"Failed to get cache value: {str(e)}")
 
     async def put(self, key: str, value) -> None:
         """Put a value in the cache with optional TTL."""
-        await self._run_in_executor(self._cache.set, key, value, self._ttl)
+        try:
+            # Try to serialize the value to verify it's JSON serializable
+            json.dumps(value)
+            await self._run_in_executor(self._cache.set, key, value, self._ttl)
+        except TypeError as e:
+            raise TypeError(f"Value is not JSON serializable: {str(e)}")
+        except Exception as e:
+            raise OSError(f"Failed to store cache value: {str(e)}")
 
     async def clear(self) -> None:
         """Clear all items from the cache."""
-        await self._run_in_executor(self._cache.clear)
+        try:
+            await self._run_in_executor(self._cache.clear)
+        except Exception as e:
+            raise OSError(f"Failed to clear cache: {str(e)}")
 
     async def close(self) -> None:
         """Close the cache when done."""
-        await self._run_in_executor(self._cache.close) 
+        try:
+            await self._run_in_executor(self._cache.close)
+        except Exception as e:
+            raise OSError(f"Failed to close cache: {str(e)}") 
