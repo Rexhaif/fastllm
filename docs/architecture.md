@@ -212,6 +212,28 @@ The system can be configured through:
    - Familiar API patterns
    - Clear type hints
    - Comprehensive logging
+   - Structured logging system
+
+## Logging System
+
+The library uses Python's built-in `logging` module for structured logging:
+
+1. **Core Components**
+   - Each module has its own logger (`logging.getLogger(__name__)`)
+   - Log levels used appropriately (DEBUG, INFO, WARNING, ERROR)
+   - Critical operations and errors are logged
+
+2. **Key Logging Areas**
+   - Cache operations (read/write errors)
+   - Request processing status
+   - Rate limiting events
+   - Error conditions and exceptions
+
+3. **Best Practices**
+   - Consistent log format
+   - Meaningful context in log messages
+   - Error traceability
+   - Performance impact consideration
 
 ## Error Handling
 
