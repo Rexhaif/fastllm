@@ -162,22 +162,14 @@ class DiskCache(CacheProvider):
         """Get a value from the cache."""
         try:
             value = await self._run_in_executor(self._cache.get, key)
-            if value is None:  # diskcache returns None for missing keys
-                raise KeyError(f"Cache for key {key} does not exist")
             return value
         except Exception as e:
-            if isinstance(e, KeyError):
-                raise
             raise OSError(f"Failed to get cache value: {str(e)}")
 
     async def put(self, key: str, value) -> None:
         """Put a value in the cache with optional TTL."""
         try:
-            # Try to serialize the value to verify it's JSON serializable
-            json.dumps(value)
             await self._run_in_executor(self._cache.set, key, value, self._ttl)
-        except TypeError as e:
-            raise TypeError(f"Value is not JSON serializable: {str(e)}")
         except Exception as e:
             raise OSError(f"Failed to store cache value: {str(e)}")
 
