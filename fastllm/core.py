@@ -68,6 +68,10 @@ class TokenStats:
     request_limit: Optional[int] = None  # Rate limit for requests per minute
     window_tokens: int = 0  # Tokens in current rate limit window
     window_requests: int = 0  # Requests in current rate limit window
+    token_limit: Optional[int] = None  # Rate limit for tokens per minute
+    request_limit: Optional[int] = None  # Rate limit for requests per minute
+    window_tokens: int = 0  # Tokens in current rate limit window
+    window_requests: int = 0  # Requests in current rate limit window
 
     @property
     def elapsed_time(self) -> float:
@@ -107,6 +111,22 @@ class TokenStats:
         requests_per_minute = (self.window_requests / self.elapsed_time) * 60
         return requests_per_minute / self.request_limit
 
+    @property
+    def token_saturation(self) -> float:
+        """Calculate token usage saturation (0.0 to 1.0)."""
+        if not self.token_limit or self.elapsed_time == 0:
+            return 0.0
+        tokens_per_minute = (self.window_tokens / self.elapsed_time) * 60
+        return tokens_per_minute / self.token_limit
+
+    @property
+    def request_saturation(self) -> float:
+        """Calculate request rate saturation (0.0 to 1.0)."""
+        if not self.request_limit or self.elapsed_time == 0:
+            return 0.0
+        requests_per_minute = (self.window_requests / self.elapsed_time) * 60
+        return requests_per_minute / self.request_limit
+
     def update(self, prompt_tokens: int, completion_tokens: int, is_cache_hit: bool = False) -> None:
         """Update token statistics."""
         self.prompt_tokens += prompt_tokens
@@ -115,6 +135,10 @@ class TokenStats:
         self.requests_completed += 1
         if is_cache_hit:
             self.cache_hits += 1
+        else:
+            # Only update window stats for non-cache hits
+            self.window_tokens += prompt_tokens + completion_tokens
+            self.window_requests += 1
         else:
             # Only update window stats for non-cache hits
             self.window_tokens += prompt_tokens + completion_tokens
@@ -284,6 +308,7 @@ class RequestManager:
         self.retry_delay = retry_delay
         self.show_progress = show_progress
         self.cache = caching_provider
+        self.cache = caching_provider
 
     def _calculate_chunk_size(self) -> int:
         """Calculate optimal chunk size based on concurrency.
@@ -343,6 +368,8 @@ class RequestManager:
         # Check cache first if available
         if self.cache is not None:
             try:
+                if await self.cache.exists(request_id):
+                    cached_response = await self.cache.get(request_id)
                 if await self.cache.exists(request_id):
                     cached_response = await self.cache.get(request_id)
                     wrapped = ResponseWrapper(cached_response, request_id, order_id)
@@ -488,8 +515,26 @@ class RequestManager:
             # Re-raise provider errors as is
             raise e
 
+    async def _make_provider_request(
+        self,
+        client: Optional[httpx.AsyncClient],
+        request: LLMRequest,
+    ) -> LLMResponse:
+        """Make a single request to the provider."""
+        try:
+            response_dict = await self.provider.make_request(client, request, self.timeout)
+            # Add required fields
+            response_dict["request_id"] = id(request)
+            response_dict["provider"] = request.provider
+            response_dict["raw_response"] = {"provider_response": response_dict.copy()}
+            return LLMResponse.from_dict(response_dict)
+        except Exception as e:
+            # Re-raise provider errors as is
+            raise e
+
 
 class RequestBatch(AbstractContextManager):
+    """A batch of requests to be processed together."""
     """A batch of requests to be processed together."""
 
     def __init__(self):
@@ -539,6 +584,7 @@ class RequestBatch(AbstractContextManager):
 
     @property
     def chat(self):
+        """Access chat completion methods."""
         """Access chat completion methods."""
         return self.Chat(self)
 
