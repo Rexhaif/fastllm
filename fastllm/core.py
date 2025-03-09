@@ -2,6 +2,7 @@
 
 import asyncio
 import time
+import logging
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from typing import (
@@ -28,6 +29,9 @@ from rich.progress import (
     TimeRemainingColumn,
     MofNCompleteColumn
 )
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 # Define a type variable for provider-specific response types
@@ -351,8 +355,7 @@ class RequestManager:
                         )
                     return wrapped
             except Exception as e:
-                # Log cache read error but continue with actual request
-                print(f"Cache read error: {str(e)}")
+                logger.warning(f"Cache read error: {str(e)}")
 
         # Process request with retries
         for attempt in range(self.retry_attempts):
@@ -369,11 +372,10 @@ class RequestManager:
                     if isinstance(response, dict)
                     else getattr(response, 'status', 200)
                 )
-                print(f"DEBUG: Response received with status {status}")
                 
                 # Check status before creating wrapper
                 if status not in range(200, 300):
-                    print(f"DEBUG: Failed response with status {status}, not caching")
+                    logger.warning(f"Request {request_id} failed with status {status}")
                     wrapped = ResponseWrapper(response, request_id, order_id)
                     return wrapped
 
@@ -389,11 +391,9 @@ class RequestManager:
                 # Cache successful response
                 if self.cache is not None:
                     try:
-                        print(f"DEBUG: Caching successful response with status {status}")
                         await self.cache.put(request_id, response)
                     except Exception as e:
-                        # Log cache write error but continue
-                        print(f"Cache write error: {str(e)}")
+                        logger.warning(f"Cache write error: {str(e)}")
                 
                 return wrapped
 

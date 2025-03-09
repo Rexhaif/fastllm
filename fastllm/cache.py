@@ -1,8 +1,12 @@
 import json
 import xxhash
 import asyncio
+import logging
 from typing import Any, Dict, Optional
 from diskcache import Cache
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 class CacheProvider:
@@ -45,12 +49,10 @@ def compute_request_hash(request: dict) -> str:
     """
     # Create a copy of the request and remove any fields that are not part of the request content
     temp_request = request.copy()
-    print(f"DEBUG: Original request: {temp_request}")
     
     # Remove internal tracking fields that shouldn't affect caching
     temp_request.pop("_request_id", None)
     temp_request.pop("_order_id", None)
-    print(f"DEBUG: After removing internal fields: {temp_request}")
     
     # Extract known fields and extra params
     known_fields = {
@@ -81,25 +83,19 @@ def compute_request_hash(request: dict) -> str:
     # Clean and separate core parameters and extra parameters
     core_params = {k: clean_value(v) for k, v in temp_request.items() if k in known_fields}
     extra_params = {k: clean_value(v) for k, v in temp_request.items() if k not in known_fields}
-    print(f"DEBUG: Core params before cleaning: {core_params}")
-    print(f"DEBUG: Extra params before cleaning: {extra_params}")
     
     # Remove None values and empty values
     core_params = {k: v for k, v in core_params.items() if v is not None}
     extra_params = {k: v for k, v in extra_params.items() if v is not None}
-    print(f"DEBUG: Core params after cleaning: {core_params}")
-    print(f"DEBUG: Extra params after cleaning: {extra_params}")
     
     # Create a combined dictionary with sorted extra params
     hash_dict = {
         "core": core_params,
         "extra": dict(sorted(extra_params.items()))  # Sort extra params for consistent hashing
     }
-    print(f"DEBUG: Final hash dict: {hash_dict}")
     
     # Serialize with sorted keys for a consistent representation
     request_str = json.dumps(hash_dict, sort_keys=True, ensure_ascii=False)
-    print(f"DEBUG: JSON string to hash: {request_str}")
     return xxhash.xxh64(request_str.encode("utf-8")).hexdigest()
 
 
