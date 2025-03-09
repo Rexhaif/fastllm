@@ -239,10 +239,7 @@ def main(
     ),
 ) -> None:
     """Run parallel request test."""
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        typer.echo("Error: OPENAI_API_KEY not set")
-        raise typer.Exit(1)
+    api_key = os.environ["OPENROUTER_API_KEY"]
 
     run_test(
         api_key=api_key,

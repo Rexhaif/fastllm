@@ -139,10 +139,6 @@ class TokenStats:
             # Only update window stats for non-cache hits
             self.window_tokens += prompt_tokens + completion_tokens
             self.window_requests += 1
-        else:
-            # Only update window stats for non-cache hits
-            self.window_tokens += prompt_tokens + completion_tokens
-            self.window_requests += 1
 
 
 class ProgressTracker:

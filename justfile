@@ -32,14 +32,10 @@ clean:
     rm -rf *.egg-info
     find . -type d -name __pycache__ -exec rm -rf {} +
 
-# Run the CLI tool
-run *ARGS:
-    poetry run fastllm {{ARGS}}
-
 
 # Run parallel request test with OpenRouter
-openrouter-test repeats="20" cache_type="disk" concurrency="50" model="meta-llama/llama-3.2-3b-instruct" :
-    OPENROUTER_API_KEY="${OPENROUTER_API_KEY}" uv run python examples/parallel_test.py \
+openrouter-test repeats="20" cache_type="disk" concurrency="50" model="meta-llama/llama-3.2-3b-instruct":
+    OPENAI_API_KEY="${OPENROUTER_API_KEY}" uv run python examples/parallel_test.py \
         --model {{model}} \
         --repeats {{repeats}} \
         --concurrency {{concurrency}} \
