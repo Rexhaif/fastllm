@@ -5,6 +5,7 @@ High-performance parallel LLM API request tool with support for multiple provide
 ## Features
 
 - Parallel request processing with configurable concurrency
+  - Allows you to process 20000+ prompt tokens per second and 1500+ output tokens per second even for extremely large LLMs, such as Deepseek-V3.
 - Built-in caching support (in-memory and disk-based)
 - Progress tracking with token usage statistics
 - Support for multiple LLM providers (OpenAI, OpenRouter, etc.)
