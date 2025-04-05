@@ -22,7 +22,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 Then install fastllm:
 ```bash
-uv pip install fastllm
+uv pip install git+https://github.com/Rexhaif/fastllm.git
 ```
 
 For development:
