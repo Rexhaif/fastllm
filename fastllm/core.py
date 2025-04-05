@@ -51,7 +51,35 @@ class ResponseWrapper(Generic[ResponseT]):
         """Get usage statistics if available."""
         if isinstance(self.response, ChatCompletion):
             return self.response.usage
+        elif isinstance(self.response, dict) and 'usage' in self.response:
+            # Handle dict responses (like embeddings)
+            usage = self.response['usage']
+            # Convert to CompletionUsage if not already
+            if not isinstance(usage, CompletionUsage):
+                return CompletionUsage(
+                    prompt_tokens=usage.get('prompt_tokens', 0),
+                    completion_tokens=usage.get('completion_tokens', 0),
+                    total_tokens=usage.get('total_tokens', 0)
+                )
+            return usage
         return None
+        
+    @property
+    def is_embedding_response(self) -> bool:
+        """Check if this is an embedding response."""
+        if isinstance(self.response, dict):
+            return 'data' in self.response and all('embedding' in item for item in self.response.get('data', []))
+        return False
+        
+    @property
+    def embeddings(self) -> list:
+        """Get embeddings from response if available."""
+        if not self.is_embedding_response:
+            return []
+            
+        if isinstance(self.response, dict) and 'data' in self.response:
+            return [item.get('embedding', []) for item in self.response.get('data', [])]
+        return []
 
 
 @dataclass
@@ -366,14 +394,12 @@ class RequestManager:
             try:
                 if await self.cache.exists(request_id):
                     cached_response = await self.cache.get(request_id)
-                if await self.cache.exists(request_id):
-                    cached_response = await self.cache.get(request_id)
                     wrapped = ResponseWrapper(cached_response, request_id, order_id)
                     if progress and wrapped.usage:
                         # Update progress with cache hit
                         progress.update(
                             wrapped.usage.prompt_tokens,
-                            wrapped.usage.completion_tokens,
+                            wrapped.usage.completion_tokens or 0,  # Handle embeddings having no completion tokens
                             is_cache_hit=True
                         )
                     return wrapped
@@ -395,21 +421,28 @@ class RequestManager:
                     if isinstance(response, dict)
                     else getattr(response, 'status', 200)
                 )
-                
-                # Check status before creating wrapper
-                if status not in range(200, 300):
-                    logger.warning(f"Request {request_id} failed with status {status}")
-                    wrapped = ResponseWrapper(response, request_id, order_id)
-                    return wrapped
 
                 # Create wrapper and update progress
                 wrapped = ResponseWrapper(response, request_id, order_id)
-                if progress and wrapped.usage:
-                    progress.update(
-                        wrapped.usage.prompt_tokens,
-                        wrapped.usage.completion_tokens,
-                        is_cache_hit=False
-                    )
+                
+                if progress:
+                    # For embeddings, usage only has prompt_tokens
+                    if isinstance(response, dict) and 'usage' in response:
+                        usage = response['usage']
+                        prompt_tokens = usage.get('prompt_tokens', 0)
+                        # Embeddings don't have completion tokens
+                        completion_tokens = usage.get('completion_tokens', 0)
+                        progress.update(
+                            prompt_tokens,
+                            completion_tokens,
+                            is_cache_hit=False
+                        )
+                    elif wrapped.usage:
+                        progress.update(
+                            wrapped.usage.prompt_tokens,
+                            wrapped.usage.completion_tokens or 0,  # Handle embeddings having no completion tokens
+                            is_cache_hit=False
+                        )
 
                 # Cache successful response
                 if self.cache is not None:
@@ -531,7 +564,6 @@ class RequestManager:
 
 class RequestBatch(AbstractContextManager):
     """A batch of requests to be processed together."""
-    """A batch of requests to be processed together."""
 
     def __init__(self):
         self.requests = []
@@ -581,8 +613,12 @@ class RequestBatch(AbstractContextManager):
     @property
     def chat(self):
         """Access chat completion methods."""
-        """Access chat completion methods."""
         return self.Chat(self)
+        
+    @property
+    def embeddings(self):
+        """Access embeddings methods."""
+        return self.Embeddings(self)
 
     class Chat:
         """Chat API that mimics OpenAI's interface."""
@@ -676,6 +712,9 @@ class RequestBatch(AbstractContextManager):
                 # Remove None values to match OpenAI's behavior
                 request = {k: v for k, v in request.items() if v is not None}
                 
+                # Add request type
+                request["type"] = "chat_completion"
+                
                 # Compute request_id at creation time
                 from fastllm.cache import compute_request_hash
                 request["_request_id"] = compute_request_hash(request)
@@ -688,3 +727,61 @@ class RequestBatch(AbstractContextManager):
                 self.batch._next_order_id += 1
                 
                 return request["_request_id"]
+    
+    class Embeddings:
+        """Embeddings API that mimics OpenAI's interface."""
+
+        def __init__(self, batch):
+            self.batch = batch
+
+        def create(
+            self,
+            *,
+            model: str,
+            input: Union[str, list[str]],
+            dimensions: Optional[int] = None,
+            encoding_format: Optional[str] = None,
+            user: Optional[str] = None,
+            **kwargs: Any
+        ) -> str:
+            """Add an embedding request to the batch.
+            
+            Args:
+                model: The model to use for embeddings (e.g., text-embedding-3-small)
+                input: The text to embed (either a string or a list of strings)
+                dimensions: The number of dimensions to return. Only supported with 
+                            text-embedding-3 models. Defaults to the model's max dimensions.
+                encoding_format: The format to return the embeddings in (float or base64)
+                user: A unique identifier for the end-user
+                **kwargs: Additional provider-specific parameters
+                
+            Returns:
+                str: The request ID (cache key) for this request
+            """
+            request = {
+                "model": model,
+                "input": input,
+                "dimensions": dimensions,
+                "encoding_format": encoding_format,
+                "user": user,
+                **kwargs,
+            }
+            
+            # Remove None values to match OpenAI's behavior
+            request = {k: v for k, v in request.items() if v is not None}
+            
+            # Add request type
+            request["type"] = "embedding"
+            
+            # Compute request_id at creation time
+            from fastllm.cache import compute_request_hash
+            request["_request_id"] = compute_request_hash(request)
+            
+            # Add to batch
+            self.batch.requests.append(request)
+            
+            # Set order ID
+            request["_order_id"] = self.batch._next_order_id
+            self.batch._next_order_id += 1
+            
+            return request["_request_id"]

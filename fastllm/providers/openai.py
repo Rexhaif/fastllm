@@ -45,12 +45,22 @@ class OpenAIProvider(Provider[ChatCompletion]):
         client: httpx.AsyncClient,
         request: dict[str, Any],
         timeout: float,
+        api_path: Optional[str] = None,
     ) -> ChatCompletion:
         """Make a request to the OpenAI API."""
         if isinstance(request, dict):
             request = OpenAIRequest.from_dict(request)
 
-        url = self.get_request_url("chat/completions")
+        # Determine request type and set appropriate API path
+        request_type = getattr(request, "type", None) or request.get("type", "chat_completion")
+        
+        if api_path is None:
+            if request_type == "embedding":
+                api_path = "embeddings"
+            else:
+                api_path = "chat/completions"
+
+        url = self.get_request_url(api_path)
         payload = request.to_request_payload()
 
         response = await client.post(
@@ -62,6 +72,10 @@ class OpenAIProvider(Provider[ChatCompletion]):
         response.raise_for_status()
         data = response.json()
 
+        # For embeddings, don't try to parse as ChatCompletion
+        if request_type == "embedding":
+            return data
+        
         return ChatCompletion(**data)
 
 
@@ -72,6 +86,7 @@ class OpenAIRequest(LLMRequest):
     model: str = Field(default="gpt-4o-mini")
     messages: list[Message]
     extra_params: dict[str, Any] = Field(default_factory=dict, exclude=True)
+    type: str = "chat_completion"  # Default to chat completion
 
     @model_validator(mode="before")
     @classmethod
@@ -84,7 +99,7 @@ class OpenAIRequest(LLMRequest):
         known_fields = {
             "provider", "model", "messages", "temperature", "max_completion_tokens",
             "top_p", "presence_penalty", "frequency_penalty", "stop", "stream",
-            "_request_id", "_order_id"  # Internal fields, handled separately in hash computation
+            "_request_id", "_order_id", "type", "input", "dimensions", "encoding_format"
         }
         
         # Collect extra parameters
@@ -92,6 +107,13 @@ class OpenAIRequest(LLMRequest):
         for k in extra_params:
             data.pop(k)
         data["extra_params"] = extra_params
+
+        # For embedding requests, there are no messages
+        if data.get("type") == "embedding":
+            # Create empty messages list if not present to satisfy Pydantic validation
+            if "messages" not in data:
+                data["messages"] = []
+            return data
 
         # Convert messages
         if "messages" in data:
@@ -123,7 +145,22 @@ class OpenAIRequest(LLMRequest):
 
     def to_request_payload(self) -> dict[str, Any]:
         """Convert request to OpenAI API payload."""
-        # Start with base parameters
+        # Handle embedding requests
+        if self.type == "embedding":
+            payload = {
+                "model": self.model,
+                "input": self.extra_params.get("input", ""),
+            }
+            
+            # Add optional parameters for embeddings
+            optional_params = ["dimensions", "encoding_format", "user"]
+            for param in optional_params:
+                if param in self.extra_params:
+                    payload[param] = self.extra_params[param]
+                    
+            return payload
+        
+        # Handle chat completion requests
         payload = {
             "model": self.model,
             "messages": self.to_openai_messages(),
@@ -133,7 +170,7 @@ class OpenAIRequest(LLMRequest):
 
         # Add optional parameters if they are set
         if self.max_completion_tokens is not None:
-            payload["max_completion_tokens"] = self.max_completion_tokens
+            payload["max_tokens"] = self.max_completion_tokens
         if self.top_p is not None:
             payload["top_p"] = self.top_p
         if self.presence_penalty is not None:
@@ -144,7 +181,9 @@ class OpenAIRequest(LLMRequest):
             payload["stop"] = self.stop
 
         # Add any extra parameters
-        payload.update(self.extra_params)
+        for key, value in self.extra_params.items():
+            if key not in payload and key not in ["input", "dimensions", "encoding_format"]:
+                payload[key] = value
 
         return payload
 

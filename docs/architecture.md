@@ -34,12 +34,14 @@ FastLLM is a Python library designed to provide a fast, efficient, and flexible 
   - Configurable parameters (temperature, tokens, penalties)
   - Support for streaming responses
   - Factory methods for creating from prompts or messages
+  - Supports both chat completions and embeddings
 
 ### 2. Response Handling (`core.py`)
 - `ResponseWrapper[ResponseT]`: Generic wrapper for provider responses
   - Maintains request ordering
   - Tracks token usage statistics
   - Provider-agnostic interface
+  - Handles both chat completion and embedding responses
 
 - `TokenStats`: Comprehensive token usage tracking
   - Prompt and completion token counts
@@ -79,6 +81,7 @@ FastLLM is a Python library designed to provide a fast, efficient, and flexible 
 
 - `OpenAIProvider`: OpenAI API implementation
   - ChatCompletion support
+  - Embeddings support
   - Organization handling
   - Custom header management
 
@@ -86,6 +89,7 @@ FastLLM is a Python library designed to provide a fast, efficient, and flexible 
   - Message format conversion
   - Extra parameter handling
   - Function and tool call support
+  - Embedding parameter handling
 
 ## Key Features
 
@@ -94,6 +98,7 @@ FastLLM is a Python library designed to provide a fast, efficient, and flexible 
 - Efficient request batching
 - Concurrent API calls
 - Progress monitoring
+- Support for both chat completions and embeddings
 
 ### 2. Caching
 - Multiple cache backends
@@ -170,7 +175,7 @@ The system can be configured through:
 1. **Request Initialization**
    ```python
    RequestBatch
-     → LLMRequest
+     → Chat Completion or Embedding Request
      → Provider-specific Request
    ```
 
@@ -269,3 +274,21 @@ The test suite is organized by component:
    - End-to-end request flow
    - Rate limiting behavior
    - Error handling scenarios
+
+## Supported APIs
+
+The library supports the following APIs:
+
+1. **Chat Completions**
+   - Multiple message support
+   - Tool and function calls
+   - Streaming responses
+   - Temperature and top_p sampling
+   
+2. **Embeddings**
+   - Single or batch text input
+   - Dimension control
+   - Format control (float/base64)
+   - Efficient batch processing
+   - Compatible with semantic search use cases
+   

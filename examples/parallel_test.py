@@ -20,7 +20,7 @@ from fastllm.cache import InMemoryCache, DiskCache
 DEFAULT_REPEATS = 10
 DEFAULT_CONCURRENCY = 50
 DEFAULT_TEMPERATURE = 0.7
-DEFAULT_OUTPUT = Path("results.json")
+DEFAULT_OUTPUT = "results.json"
 
 app = typer.Typer()
 
@@ -45,7 +45,7 @@ def run_test(
     model: str,
     repeats: int,
     concurrency: int,
-    output: Path,
+    output: Path | str,
     temperature: float,
     max_tokens: Optional[int],
     no_progress: bool = False,
@@ -118,6 +118,9 @@ def run_test(
             result = process_response(response, i)
             successful_first += 1
             results_data_first.append(result)
+            if i+3 > len(responses_first):
+                console.print(f"Response #{i+1} of {len(responses_first)}")
+                console.print(result)
 
         console.print(
             Panel.fit(
@@ -139,6 +142,9 @@ def run_test(
             result = process_response(response, i)
             successful_second += 1
             results_data_second.append(result)
+            if i+2 > len(responses_second):
+                console.print(f"Response #{i+1} of {len(responses_second)}")
+                console.print(result)
         console.print(
             Panel.fit(
                 "\n".join(
@@ -152,9 +158,11 @@ def run_test(
         )
 
         # Save results from both runs
-        output.write_text(
-            json.dumps(
-                {
+        if output != "NO_OUTPUT":
+            output = Path(output)
+            output.write_text(
+                json.dumps(
+                    {
                     "config": {
                         "model": model,
                         "temperature": temperature,
@@ -173,11 +181,11 @@ def run_test(
                     "second_run_summary": {
                         "successful": successful_second,
                         "total": len(responses_second),
+                        },
                     },
-                },
-                indent=2,
+                    indent=2,
+                )
             )
-        )
     finally:
         # Clean up disk cache if used
         if cache_type == "disk":
@@ -205,7 +213,7 @@ def main(
         "-c",
         help="Concurrent requests",
     ),
-    output: Path = typer.Option(
+    output: str = typer.Option(
         DEFAULT_OUTPUT,
         "--output",
         "-o",

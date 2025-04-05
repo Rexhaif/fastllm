@@ -57,7 +57,9 @@ def compute_request_hash(request: dict) -> str:
     # Extract known fields and extra params
     known_fields = {
         "provider", "model", "messages", "temperature", "max_completion_tokens",
-        "top_p", "presence_penalty", "frequency_penalty", "stop", "stream"
+        "top_p", "presence_penalty", "frequency_penalty", "stop", "stream",
+        # Embedding specific fields
+        "type", "input", "dimensions", "encoding_format", "user"
     }
     
     def clean_value(v):

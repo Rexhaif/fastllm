@@ -33,6 +33,8 @@ dependencies = [
     "xxhash>=3.0.0",
     "ipywidgets>=8.1.5",
     "dotenv>=0.9.9",
+    "typer>=0.15.2",
+    "numpy>=2.0.2",
 ]
 
 [project.optional-dependencies]
