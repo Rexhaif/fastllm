@@ -124,10 +124,7 @@ responses = manager.process_batch(batch)
 
 # Process responses
 for request_id, response in zip(request_ids, responses):
-    if isinstance(response, Exception):
-        print(f"Request {request_id} failed: {response}")
-    else:
-        print(f"Request {request_id}: {response.response.choices[0].message.content}")
+    print(f"Request {request_id}: {response.response.choices[0].message.content}")
         
 # You can use request IDs to check cache status
 for request_id in request_ids:
