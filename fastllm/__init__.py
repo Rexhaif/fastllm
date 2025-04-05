@@ -5,8 +5,6 @@ __version__ = "0.1.0"
 from fastllm.core import (
     RequestBatch,
     RequestManager,
-    Message,
-    LLMRequest,
     LLMResponse,
     ResponseWrapper,
     TokenStats,
@@ -24,8 +22,6 @@ __all__ = [
     # Core components
     "RequestBatch",
     "RequestManager",
-    "Message",
-    "LLMRequest",
     "LLMResponse",
     "ResponseWrapper",
     "TokenStats",

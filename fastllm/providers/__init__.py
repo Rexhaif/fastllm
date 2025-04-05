@@ -1,6 +1,6 @@
 """Provider implementations."""
 
 from .base import Provider
-from .openai import OpenAIProvider, OpenAIRequest
+from .openai import OpenAIProvider
 
-__all__ = ["Provider", "OpenAIProvider", "OpenAIRequest"]
+__all__ = ["Provider", "OpenAIProvider"]

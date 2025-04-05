@@ -6,10 +6,8 @@ import logging
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from typing import (
-    TYPE_CHECKING,
     Any,
     Generic,
-    Literal,
     Optional,
     TypeVar,
     Union,
@@ -18,7 +16,7 @@ from typing import (
 import httpx
 from openai.types import CompletionUsage
 from openai.types.chat import ChatCompletion
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel
 from rich.progress import (
     BarColumn,
     Progress,
@@ -29,6 +27,8 @@ from rich.progress import (
     TimeRemainingColumn,
     MofNCompleteColumn
 )
+
+from fastllm.cache import compute_request_hash
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -231,71 +231,6 @@ class ProgressTracker:
         )
 
 
-class Message(BaseModel):
-    """A single message in a conversation."""
-
-    role: Literal["system", "user", "assistant", "function", "tool"] = "user"
-    content: Optional[str] = None
-    name: Optional[str] = None
-    function_call: Optional[dict[str, Any]] = None
-    tool_calls: Optional[list[dict[str, Any]]] = None
-
-    @classmethod
-    def from_dict(cls, data: Union[str, dict[str, Any]]) -> "Message":
-        """Create a message from a string or dictionary."""
-        if isinstance(data, str):
-            return cls(role="user", content=data)
-        return cls(**data)
-
-
-MessageType = Union[Message, dict[str, Any], str]
-
-
-class LLMRequest(BaseModel):
-    """Base model for LLM requests."""
-
-    provider: str
-    messages: list[Message]
-    model: Optional[str] = None
-    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
-    max_completion_tokens: Optional[int] = None
-    top_p: Optional[float] = Field(default=1.0, ge=0.0, le=1.0)
-    presence_penalty: Optional[float] = Field(default=0.0, ge=-2.0, le=2.0)
-    frequency_penalty: Optional[float] = Field(default=0.0, ge=-2.0, le=2.0)
-    stop: Optional[list[str]] = None
-    stream: bool = False
-
-    @model_validator(mode="before")
-    @classmethod
-    def validate_messages(cls, data: dict[str, Any]) -> dict[str, Any]:
-        """Convert message dictionaries to Message objects."""
-        if "messages" in data:
-            if isinstance(data["messages"], list):
-                data["messages"] = [
-                    msg if isinstance(msg, Message) else Message.from_dict(msg)
-                    for msg in data["messages"]
-                ]
-        elif "prompt" in data:  # Backward compatibility
-            data["messages"] = [Message(role="user", content=data.pop("prompt"))]
-        return data
-
-    @classmethod
-    def from_prompt(
-        cls, provider: str, prompt: Union[str, dict[str, Any]], **kwargs
-    ) -> "LLMRequest":
-        """Create a request from a single prompt."""
-        if isinstance(prompt, str):
-            messages = [Message(role="user", content=prompt)]
-        else:
-            messages = [Message.from_dict(prompt)]
-        return cls(provider=provider, messages=messages, **kwargs)
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "LLMRequest":
-        """Create a request from a dictionary."""
-        return cls(**data)
-
-
 class LLMResponse(BaseModel):
     """Base model for LLM responses."""
 
@@ -331,7 +266,6 @@ class RequestManager:
         self.retry_attempts = retry_attempts
         self.retry_delay = retry_delay
         self.show_progress = show_progress
-        self.cache = caching_provider
         self.cache = caching_provider
 
     def _calculate_chunk_size(self) -> int:
@@ -414,13 +348,6 @@ class RequestManager:
                     request,
                     self.timeout,
                 )
-                
-                # Get status from either attribute or dict
-                status = (
-                    response.get('status')
-                    if isinstance(response, dict)
-                    else getattr(response, 'status', 200)
-                )
 
                 # Create wrapper and update progress
                 wrapped = ResponseWrapper(response, request_id, order_id)
@@ -471,7 +398,24 @@ class RequestManager:
 
         # Convert RequestBatch to list of requests if needed
         if isinstance(batch, RequestBatch):
-            requests = batch.requests
+            # Extract original requests from batch format
+            requests = []
+            for batch_req in batch.requests:
+                # Extract request_id and order_id from custom_id
+                request_id, order_id_str = batch_req["custom_id"].split("#")
+                order_id = int(order_id_str)
+                
+                # Determine type from URL
+                req_type = "chat_completion" if batch_req["url"] == "/v1/chat/completions" else "embedding"
+                
+                # Extract the original request from the batch format
+                request = {
+                    **batch_req["body"],
+                    "_request_id": request_id,
+                    "_order_id": order_id,
+                    "type": req_type
+                }
+                requests.append(request)
         else:
             # Handle raw request list - compute request IDs and add order IDs
             requests = []
@@ -530,32 +474,34 @@ class RequestManager:
     async def _make_provider_request(
         self,
         client: Optional[httpx.AsyncClient],
-        request: LLMRequest,
+        request: dict[str, Any],
     ) -> LLMResponse:
-        """Make a single request to the provider."""
+        """Make a single request to the provider.
+        
+        This method handles both direct dictionaries and OpenAI Batch format requests.
+        """
         try:
-            response_dict = await self.provider.make_request(client, request, self.timeout)
+            # If request is in OpenAI Batch format, extract the body and metadata
+            if "custom_id" in request and "url" in request and "body" in request:
+                request_id, _ = request["custom_id"].split("#")
+                provider_name = self.provider.__class__.__name__.replace("Provider", "").lower()
+                request_body = request["body"]
+                request_type = "chat_completion" if request["url"] == "/v1/chat/completions" else "embedding"
+            else:
+                # Legacy format
+                request_id = id(request)
+                provider_name = request.get("provider", self.provider.__class__.__name__.replace("Provider", "").lower())
+                request_body = request
+                request_type = request.get("type", "chat_completion")
+            
+            # Make the actual request
+            response_dict = await self.provider.make_request(client, request_body, self.timeout)
+            
             # Add required fields
-            response_dict["request_id"] = id(request)
-            response_dict["provider"] = request.provider
+            response_dict["request_id"] = request_id
+            response_dict["provider"] = provider_name
             response_dict["raw_response"] = {"provider_response": response_dict.copy()}
-            return LLMResponse.from_dict(response_dict)
-        except Exception as e:
-            # Re-raise provider errors as is
-            raise e
-
-    async def _make_provider_request(
-        self,
-        client: Optional[httpx.AsyncClient],
-        request: LLMRequest,
-    ) -> LLMResponse:
-        """Make a single request to the provider."""
-        try:
-            response_dict = await self.provider.make_request(client, request, self.timeout)
-            # Add required fields
-            response_dict["request_id"] = id(request)
-            response_dict["provider"] = request.provider
-            response_dict["raw_response"] = {"provider_response": response_dict.copy()}
+            
             return LLMResponse.from_dict(response_dict)
         except Exception as e:
             # Re-raise provider errors as is
@@ -563,7 +509,7 @@ class RequestManager:
 
 
 class RequestBatch(AbstractContextManager):
-    """A batch of requests to be processed together."""
+    """A batch of requests to be processed together in OpenAI Batch format."""
 
     def __init__(self):
         self.requests = []
@@ -589,18 +535,30 @@ class RequestBatch(AbstractContextManager):
         """
         # This method is deprecated and only kept for backward compatibility
         # All request creation should go through chat.completions.create
-        if "_request_id" not in request:
-            # Compute request ID for caching if not already present
-            from fastllm.cache import compute_request_hash
-            request["_request_id"] = compute_request_hash(request)
         
-        # Add order ID for maintaining sequence
-        request["_order_id"] = self._next_order_id
+        # Compute request ID for caching if not already present
+        request_id = compute_request_hash(request)
+        order_id = self._next_order_id
         self._next_order_id += 1
         
+        # Determine the endpoint URL based on request type
+        url = "/v1/chat/completions"
+        if request.get("type") == "embedding":
+            url = "/v1/embeddings"
+        
+        # Create a custom_id from request_id and order_id
+        custom_id = f"{request_id}#{order_id}"
+        
+        # Create batch format request directly
+        batch_request = {
+            "custom_id": custom_id,
+            "url": url,
+            "body": {k: v for k, v in request.items() if k not in ["type"]}
+        }
+        
         # Add to batch
-        self.requests.append(request)
-        return request["_request_id"]
+        self.requests.append(batch_request)
+        return request_id
 
     @classmethod
     def merge(cls, batches: list["RequestBatch"]) -> "RequestBatch":
@@ -676,7 +634,8 @@ class RequestBatch(AbstractContextManager):
                 Returns:
                     str: The request ID (cache key) for this request
                 """
-                request = {
+                # Create the request body
+                body = {
                     "model": model,
                     "messages": messages,
                     "temperature": temperature,
@@ -706,27 +665,32 @@ class RequestBatch(AbstractContextManager):
                 }
                 
                 for key, default in defaults.items():
-                    if key in request and request[key] is None:
-                        request[key] = default
+                    if key in body and body[key] is None:
+                        body[key] = default
                 
                 # Remove None values to match OpenAI's behavior
-                request = {k: v for k, v in request.items() if v is not None}
-                
-                # Add request type
-                request["type"] = "chat_completion"
+                body = {k: v for k, v in body.items() if v is not None}
                 
                 # Compute request_id at creation time
-                from fastllm.cache import compute_request_hash
-                request["_request_id"] = compute_request_hash(request)
                 
-                # Add to batch and return the request ID
-                self.batch.requests.append(request)
-                
-                # Set order ID
-                request["_order_id"] = self.batch._next_order_id
+                request_id = compute_request_hash({"type": "chat_completion", **body})
+                order_id = self.batch._next_order_id
                 self.batch._next_order_id += 1
                 
-                return request["_request_id"]
+                # Create custom_id from request_id and order_id
+                custom_id = f"{request_id}#{order_id}"
+                
+                # Create the batch request directly in OpenAI Batch format
+                batch_request = {
+                    "custom_id": custom_id,
+                    "url": "/v1/chat/completions",
+                    "body": body
+                }
+                
+                # Add to batch
+                self.batch.requests.append(batch_request)
+                
+                return request_id
     
     class Embeddings:
         """Embeddings API that mimics OpenAI's interface."""
@@ -758,7 +722,8 @@ class RequestBatch(AbstractContextManager):
             Returns:
                 str: The request ID (cache key) for this request
             """
-            request = {
+            # Create the request body
+            body = {
                 "model": model,
                 "input": input,
                 "dimensions": dimensions,
@@ -768,20 +733,25 @@ class RequestBatch(AbstractContextManager):
             }
             
             # Remove None values to match OpenAI's behavior
-            request = {k: v for k, v in request.items() if v is not None}
-            
-            # Add request type
-            request["type"] = "embedding"
+            body = {k: v for k, v in body.items() if v is not None}
             
             # Compute request_id at creation time
             from fastllm.cache import compute_request_hash
-            request["_request_id"] = compute_request_hash(request)
-            
-            # Add to batch
-            self.batch.requests.append(request)
-            
-            # Set order ID
-            request["_order_id"] = self.batch._next_order_id
+            request_id = compute_request_hash({"type": "embedding", **body})
+            order_id = self.batch._next_order_id
             self.batch._next_order_id += 1
             
-            return request["_request_id"]
+            # Create custom_id from request_id and order_id
+            custom_id = f"{request_id}#{order_id}"
+            
+            # Create the batch request directly in OpenAI Batch format
+            batch_request = {
+                "custom_id": custom_id,
+                "url": "/v1/embeddings",
+                "body": body
+            }
+            
+            # Add to batch
+            self.batch.requests.append(batch_request)
+            
+            return request_id
