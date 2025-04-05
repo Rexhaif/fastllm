@@ -1,6 +1,6 @@
 # FastLLM Architecture
 
-FastLLM is a Python library designed to provide a fast, efficient, and flexible interface for working with Large Language Models (LLMs). This document outlines the key architectural components and their interactions.
+FastLLM is a Python library that simplifies parallel processing of LLM API requests. This document outlines the core architecture and components of the library.
 
 ## System Architecture
 
@@ -23,73 +23,88 @@ FastLLM is a Python library designed to provide a fast, efficient, and flexible 
 
 ## Core Components
 
-### 1. Message and Request Models (`core.py`)
-- `Message`: Represents a single message in a conversation
-  - Supports system, user, assistant, function, and tool roles
-  - Handles function calls and tool calls
-  - Flexible content types (string or structured data)
+### RequestBatch
 
-- `LLMRequest`: Base model for LLM requests
-  - Provider-agnostic request format
-  - Configurable parameters (temperature, tokens, penalties)
-  - Support for streaming responses
-  - Factory methods for creating from prompts or messages
-  - Supports both chat completions and embeddings
+`RequestBatch` allows grouping multiple LLM requests into a batch for efficient parallel processing. It internally stores requests in an OpenAI Batch-compatible format, which is a minimal and efficient representation.
 
-### 2. Response Handling (`core.py`)
-- `ResponseWrapper[ResponseT]`: Generic wrapper for provider responses
-  - Maintains request ordering
-  - Tracks token usage statistics
-  - Provider-agnostic interface
-  - Handles both chat completion and embedding responses
+#### OpenAI Batch Format
 
-- `TokenStats`: Comprehensive token usage tracking
-  - Prompt and completion token counts
-  - Rate limiting statistics
-  - Cache hit ratio monitoring
-  - Performance metrics (tokens/second)
+Each request in a batch is stored in the following format:
 
-### 3. Progress Tracking (`core.py`)
-- `ProgressTracker`: Rich progress display
-  - Real-time token usage statistics
-  - Cache hit/miss ratios
-  - ETA and time elapsed
-  - Rate limit saturation monitoring
+```json
+{
+  "custom_id": "request_hash#order_id", 
+  "url": "/v1/chat/completions", 
+  "body": {
+    "model": "gpt-3.5-turbo",
+    "messages": [...],
+    "temperature": 0.7,
+    ...
+  }
+}
+```
 
-### 4. Cache System (`cache.py`)
-- `CacheProvider`: Abstract base class for caching
-  - Async interface for all operations
-  - Consistent error handling
+- `custom_id`: Combined unique identifier (`request_id#order_id`) that allows extracting the request hash and order when needed
+- `url`: Endpoint path which also indicates the request type ("/v1/chat/completions" or "/v1/embeddings")
+- `body`: The actual request parameters
 
-- Implementations:
-  - `InMemoryCache`: Fast, non-persistent cache
-  - `DiskCache`: Persistent storage with TTL support
-    - Thread-safe operations
-    - JSON serialization
-    - Configurable directory and options
+This minimal format avoids redundant metadata storage while maintaining all necessary information. The `custom_id` field serves as the single source of truth for request identification and ordering, while the `url` determines the request type.
 
-- `compute_request_hash`: Consistent request hashing
-  - Deterministic hash generation
-  - Handles core and extra parameters
-  - Excludes internal tracking fields
+### RequestManager
 
-### 5. Provider System (`providers/`)
-- `Provider[ResponseT]`: Generic base class
-  - Type-safe response handling
-  - Standardized HTTP headers
-  - Configurable API endpoints
+`RequestManager` handles the execution of request batches with features like:
 
-- `OpenAIProvider`: OpenAI API implementation
-  - ChatCompletion support
-  - Embeddings support
-  - Organization handling
-  - Custom header management
+- Concurrency control
+- Retries with backoff
+- Progress tracking
+- Caching
 
-- `OpenAIRequest`: OpenAI-specific request model
-  - Message format conversion
-  - Extra parameter handling
-  - Function and tool call support
-  - Embedding parameter handling
+### CacheProvider
+
+Abstract base class for different caching implementations:
+
+- `InMemoryCache`: Simple in-memory dictionary-based cache
+- `DiskCache`: Persistent disk-based cache using diskcache
+
+### ResponseWrapper
+
+Wraps provider-specific responses with additional metadata and helper methods to standardize interactions with different response formats.
+
+## Key Utilities
+
+- `compute_request_hash`: Consistent request hashing for caching and deduplication
+- `TokenStats`: Tracking token usage and rate limits
+- `ProgressTracker`: Visual progress bar with statistics
+
+## Request Flow
+
+1. Create a `RequestBatch` and add requests via APIs like `batch.chat.completions.create()`
+2. Each request is directly stored in OpenAI Batch format with a `custom_id` that combines the request hash and order ID
+3. Pass the batch to a `RequestManager` for parallel processing
+4. The manager extracts necessary metadata from the `custom_id` and `url` fields
+5. Responses are returned in the original request order
+
+## Caching
+
+The library implements efficient caching:
+- Request hashing for consistent cache keys
+- Support for both in-memory and persistent caching
+- Cache hits bypass network requests
+
+## Provider Interface
+
+The library's provider system is designed to work with the simplified OpenAI Batch format:
+- Providers receive only the request body and necessary metadata
+- No conversion between formats is required during processing
+- Both chat completions and embeddings use the same batch structure with different URLs
+- API endpoints are determined automatically based on request type within each provider implementation
+
+## Extensions
+
+The library is designed to be easily extensible:
+- Support for multiple LLM providers
+- Custom cache implementations
+- Flexible request formatting
 
 ## Key Features
 

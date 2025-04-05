@@ -285,15 +285,3 @@ class ResponseWrapper(Generic[ResponseT]):
         request_id: str,
         order_id: int
     )
-```
-
-### LLMResponse
-
-```python
-class LLMResponse(BaseModel):
-    request_id: int | str
-    provider: str
-    content: str
-    raw_response: dict[str, Any]
-    finish_reason: Optional[str] = None
-    usage: Optional[dict[str, int]] = None

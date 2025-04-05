@@ -36,17 +36,24 @@ def test_request_batch():
     # Verify request was added
     assert len(batch.requests) == 1
     
-    # Verify request_id was properly set
-    assert batch.requests[0]["_request_id"] == request_id
+    # Verify OpenAI Batch format
+    assert "custom_id" in batch.requests[0]
+    assert "url" in batch.requests[0]
+    assert "body" in batch.requests[0]
     
-    # Verify order_id was properly set
-    assert batch.requests[0]["_order_id"] == 0
+    # Verify custom_id format and extract request_id and order_id
+    custom_id_parts = batch.requests[0]["custom_id"].split("#")
+    assert len(custom_id_parts) == 2
+    extracted_request_id, order_id_str = custom_id_parts
+    assert extracted_request_id == request_id
+    assert order_id_str == "0"
+    
+    # Verify URL indicates chat completion
+    assert batch.requests[0]["url"] == "/v1/chat/completions"
     
     # Verify request_id is computed correctly
     # Include all fields that affect the hash
-    expected_request = batch.requests[0].copy()
-    expected_request.pop("_request_id", None)  # Remove request_id
-    expected_request.pop("_order_id", None)  # Remove order_id
+    expected_request = {"type": "chat_completion", **batch.requests[0]["body"]}
     assert request_id == compute_request_hash(expected_request)
 
 
@@ -59,7 +66,7 @@ def test_request_batch_merge():
         messages=[{"role": "user", "content": "Hi"}],
     )
     assert len(batch1.requests) == 1
-    assert batch1.requests[0]["_request_id"] == request_id1
+    assert batch1.requests[0]["custom_id"].split("#")[0] == request_id1
 
     # Create second batch
     batch2 = RequestBatch()
@@ -72,17 +79,17 @@ def test_request_batch_merge():
         messages=[{"role": "user", "content": "Hey"}],
     )
     assert len(batch2.requests) == 2
-    assert batch2.requests[0]["_request_id"] == request_id2
-    assert batch2.requests[1]["_request_id"] == request_id3
+    assert batch2.requests[0]["custom_id"].split("#")[0] == request_id2
+    assert batch2.requests[1]["custom_id"].split("#")[0] == request_id3
 
     # Test merging batches
     merged_batch = RequestBatch.merge([batch1, batch2])
     assert len(merged_batch.requests) == 3
     
     # Verify request_ids are preserved after merge
-    assert merged_batch.requests[0]["_request_id"] == request_id1
-    assert merged_batch.requests[1]["_request_id"] == request_id2
-    assert merged_batch.requests[2]["_request_id"] == request_id3
+    assert merged_batch.requests[0]["custom_id"].split("#")[0] == request_id1
+    assert merged_batch.requests[1]["custom_id"].split("#")[0] == request_id2
+    assert merged_batch.requests[2]["custom_id"].split("#")[0] == request_id3
 
 
 def test_request_batch_multiple_merges():
@@ -94,7 +101,7 @@ def test_request_batch_multiple_merges():
         messages=[{"role": "user", "content": "Hi"}],
     )
     assert len(batch1.requests) == 1
-    assert batch1.requests[0]["_request_id"] == request_id1
+    assert batch1.requests[0]["custom_id"].split("#")[0] == request_id1
 
     # Create second batch
     batch2 = RequestBatch()
@@ -102,7 +109,7 @@ def test_request_batch_multiple_merges():
         model="dummy-model",
         messages=[{"role": "user", "content": "Hello"}],
     )
-    assert batch2.requests[0]["_request_id"] == request_id2
+    assert batch2.requests[0]["custom_id"].split("#")[0] == request_id2
 
     # Create third batch
     batch3 = RequestBatch()
@@ -110,16 +117,16 @@ def test_request_batch_multiple_merges():
         model="dummy-model",
         messages=[{"role": "user", "content": "Hey"}],
     )
-    assert batch3.requests[0]["_request_id"] == request_id3
+    assert batch3.requests[0]["custom_id"].split("#")[0] == request_id3
 
     # Test merging multiple batches
     final_batch = RequestBatch.merge([batch1, batch2, batch3])
     assert len(final_batch.requests) == 3
     
     # Verify request_ids are preserved after merge
-    assert final_batch.requests[0]["_request_id"] == request_id1
-    assert final_batch.requests[1]["_request_id"] == request_id2
-    assert final_batch.requests[2]["_request_id"] == request_id3
+    assert final_batch.requests[0]["custom_id"].split("#")[0] == request_id1
+    assert final_batch.requests[1]["custom_id"].split("#")[0] == request_id2
+    assert final_batch.requests[2]["custom_id"].split("#")[0] == request_id3
 
 
 def test_request_id_consistency():
@@ -164,10 +171,8 @@ def test_request_id_with_none_values():
         top_p=None,  # Should be replaced with default
     )
     
-    # Get the actual request that was created
-    request1 = batch.requests[0].copy()
-    request1.pop("_request_id", None)
-    request1.pop("_order_id", None)
+    # Get the actual request body that was created
+    body1 = batch.requests[0]["body"]
     
     # Create identical request without None values
     batch2 = RequestBatch()
@@ -176,13 +181,39 @@ def test_request_id_with_none_values():
         messages=[{"role": "user", "content": "Hi"}],
     )
     
-    # Get the second actual request
-    request2 = batch2.requests[0].copy()
-    request2.pop("_request_id", None)
-    request2.pop("_order_id", None)
+    # Get the second actual request body
+    body2 = batch2.requests[0]["body"]
     
     # Both requests should have the same content
-    assert request1 == request2
+    assert body1 == body2
     
     # Both request IDs should be identical since None values are replaced with defaults
     assert request_id == request_id2
+
+
+def test_embeddings_request_format():
+    """Test the format of embeddings requests."""
+    batch = RequestBatch()
+    request_id = batch.embeddings.create(
+        model="text-embedding-ada-002",
+        input="Hello world",
+    )
+    
+    # Verify request was added
+    assert len(batch.requests) == 1
+    
+    # Verify OpenAI Batch format
+    assert "custom_id" in batch.requests[0]
+    assert batch.requests[0]["url"] == "/v1/embeddings"
+    assert "body" in batch.requests[0]
+    
+    # Verify custom_id format and extract request_id and order_id
+    custom_id_parts = batch.requests[0]["custom_id"].split("#")
+    assert len(custom_id_parts) == 2
+    extracted_request_id, order_id_str = custom_id_parts
+    assert extracted_request_id == request_id
+    assert order_id_str == "0"
+    
+    # Verify body content
+    assert batch.requests[0]["body"]["model"] == "text-embedding-ada-002"
+    assert batch.requests[0]["body"]["input"] == "Hello world"

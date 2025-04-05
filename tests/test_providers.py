@@ -1,5 +1,5 @@
 from fastllm.providers.base import Provider
-from fastllm.providers.openai import OpenAIProvider, OpenAIRequest
+from fastllm.providers.openai import OpenAIProvider
 from openai.types.chat import ChatCompletion
 from openai.types.chat.chat_completion import Choice, ChatCompletionMessage
 from openai.types.completion_usage import CompletionUsage
@@ -74,13 +74,32 @@ def test_openai_provider_get_request_headers_org():
     assert headers.get("OpenAI-Organization") == "org123"
 
 
-def test_openai_request_from_prompt_and_payload():
-    # Test conversion from a prompt to an OpenAIRequest and its payload generation
-    req = OpenAIRequest.from_prompt("Hello world!", model="gpt-dummy")
-    payload = req.to_request_payload()
+def test_openai_provider_prepare_chat_completion_payload():
+    # Test conversion from a simple request to payload
+    provider = OpenAIProvider(api_key="testkey")
+    request = {
+        "model": "gpt-dummy",
+        "messages": [{"role": "user", "content": "Hello world!"}]
+    }
+    payload = provider._prepare_payload(request, "chat_completion")
+    
     # Verify that the model and messages are set correctly
     assert payload["model"] == "gpt-dummy"
     assert "messages" in payload
     assert isinstance(payload["messages"], list)
     assert payload["messages"][0]["role"] == "user"
     assert payload["messages"][0]["content"] == "Hello world!"
+
+
+def test_openai_provider_prepare_embedding_payload():
+    # Test conversion from embedding request to payload
+    provider = OpenAIProvider(api_key="testkey")
+    request = {
+        "model": "text-embedding-3-small",
+        "input": ["Sample text 1", "Sample text 2"]
+    }
+    payload = provider._prepare_payload(request, "embedding")
+    
+    # Verify model and input are set correctly
+    assert payload["model"] == "text-embedding-3-small"
+    assert payload["input"] == ["Sample text 1", "Sample text 2"]

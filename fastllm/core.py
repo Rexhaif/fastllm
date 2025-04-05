@@ -231,22 +231,6 @@ class ProgressTracker:
         )
 
 
-class LLMResponse(BaseModel):
-    """Base model for LLM responses."""
-
-    request_id: int | str
-    provider: str
-    content: str
-    raw_response: dict[str, Any]
-    finish_reason: Optional[str] = None
-    usage: Optional[dict[str, int]] = None
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "LLMResponse":
-        """Create a response from a dictionary."""
-        return cls(**data)
-
-
 class RequestManager:
     """Manages parallel LLM API requests."""
 
@@ -475,7 +459,7 @@ class RequestManager:
         self,
         client: Optional[httpx.AsyncClient],
         request: dict[str, Any],
-    ) -> LLMResponse:
+    ) -> dict[str, Any]:
         """Make a single request to the provider.
         
         This method handles both direct dictionaries and OpenAI Batch format requests.
@@ -502,7 +486,7 @@ class RequestManager:
             response_dict["provider"] = provider_name
             response_dict["raw_response"] = {"provider_response": response_dict.copy()}
             
-            return LLMResponse.from_dict(response_dict)
+            return response_dict
         except Exception as e:
             # Re-raise provider errors as is
             raise e
@@ -533,8 +517,6 @@ class RequestBatch(AbstractContextManager):
         Returns:
             str: The request ID (cache key) for this request
         """
-        # This method is deprecated and only kept for backward compatibility
-        # All request creation should go through chat.completions.create
         
         # Compute request ID for caching if not already present
         request_id = compute_request_hash(request)
@@ -735,8 +717,6 @@ class RequestBatch(AbstractContextManager):
             # Remove None values to match OpenAI's behavior
             body = {k: v for k, v in body.items() if v is not None}
             
-            # Compute request_id at creation time
-            from fastllm.cache import compute_request_hash
             request_id = compute_request_hash({"type": "embedding", **body})
             order_id = self.batch._next_order_id
             self.batch._next_order_id += 1

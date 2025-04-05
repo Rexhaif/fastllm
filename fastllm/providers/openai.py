@@ -40,7 +40,6 @@ class OpenAIProvider(Provider[ChatCompletion]):
         client: httpx.AsyncClient,
         request: dict[str, Any],
         timeout: float,
-        api_path: Optional[str] = None,
     ) -> ChatCompletion:
         """Make a request to the OpenAI API."""
         # Determine request type from the request or infer from content
@@ -59,12 +58,11 @@ class OpenAIProvider(Provider[ChatCompletion]):
             # Handle unexpected input
             raise ValueError(f"Unexpected request type: {type(request)}")
         
-        # Set API path based on request type
-        if api_path is None:
-            if request_type == "embedding":
-                api_path = "embeddings"
-            else:
-                api_path = "chat/completions"
+        # Determine API path based on request type
+        if request_type == "embedding":
+            api_path = "embeddings"
+        else:
+            api_path = "chat/completions"
 
         url = self.get_request_url(api_path)
         payload = self._prepare_payload(request, request_type)

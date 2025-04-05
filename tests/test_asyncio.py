@@ -6,7 +6,7 @@ import time
 import pytest
 from openai.types.completion_usage import CompletionUsage
 
-from fastllm.core import LLMRequest, LLMResponse, RequestManager
+from fastllm.core import RequestManager
 
 # Constants for testing
 MAX_DURATION = 0.5  # Maximum expected duration for concurrent execution
@@ -18,9 +18,11 @@ EXPECTED_FAILURES = 1  # Expected number of failed responses
 class DummyRequestManager(RequestManager):
     async def _make_provider_request(self, client, request):
         await asyncio.sleep(0.1)  # Simulate network delay
+        # Extract message content from request
+        message_content = request.get("messages", [{}])[0].get("content", "No content")
         response_dict = {
             "request_id": id(request),  # Add unique request ID
-            "content": f"Response to: {request.messages[0].content}",
+            "content": f"Response to: {message_content}",
             "finish_reason": "dummy_end",
             "provider": "dummy",
             "raw_response": {"dummy_key": "dummy_value"},
@@ -30,28 +32,32 @@ class DummyRequestManager(RequestManager):
                 "total_tokens": 15
             }
         }
-        return LLMResponse.from_dict(response_dict)
+        return response_dict
 
 
 @pytest.mark.asyncio
 async def test_dummy_manager_single_request():
     manager = DummyRequestManager(provider="dummy")
-    request = LLMRequest.from_prompt(
-        provider="dummy", prompt="Hello async!", model="dummy-model"
-    )
+    request = {
+        "provider": "dummy", 
+        "messages": [{"role": "user", "content": "Hello async!"}], 
+        "model": "dummy-model"
+    }
     response = await manager._make_provider_request(None, request)
-    assert response.content == "Response to: Hello async!"
-    assert response.finish_reason == "dummy_end"
-    assert response.usage["total_tokens"] == 15
+    assert response["content"] == "Response to: Hello async!"
+    assert response["finish_reason"] == "dummy_end"
+    assert response["usage"]["total_tokens"] == 15
 
 
 @pytest.mark.asyncio
 async def test_dummy_manager_concurrent_requests():
     manager = DummyRequestManager(provider="dummy")
     requests = [
-        LLMRequest.from_prompt(
-            provider="dummy", prompt=f"Message {i}", model="dummy-model"
-        )
+        {
+            "provider": "dummy", 
+            "messages": [{"role": "user", "content": f"Message {i}"}], 
+            "model": "dummy-model"
+        }
         for i in range(5)
     ]
 
@@ -64,9 +70,9 @@ async def test_dummy_manager_concurrent_requests():
     # All requests should complete successfully
     assert len(responses) == 5
     for i, response in enumerate(responses):
-        assert response.content == f"Response to: Message {i}"
-        assert response.finish_reason == "dummy_end"
-        assert response.usage["total_tokens"] == 15
+        assert response["content"] == f"Response to: Message {i}"
+        assert response["finish_reason"] == "dummy_end"
+        assert response["usage"]["total_tokens"] == 15
 
     # Requests should be processed concurrently
     # Total time should be less than sequential time (5 * 0.1s)
@@ -75,12 +81,13 @@ async def test_dummy_manager_concurrent_requests():
 
 class FailingDummyManager(RequestManager):
     async def _make_provider_request(self, client, request):
-        if "fail" in request.messages[0].content.lower():
+        message_content = request.get("messages", [{}])[0].get("content", "")
+        if "fail" in message_content.lower():
             raise Exception("Provider failure")
         await asyncio.sleep(0.1)
         response_dict = {
             "request_id": id(request),  # Add unique request ID
-            "content": f"Response to: {request.messages[0].content}",
+            "content": f"Response to: {message_content}",
             "finish_reason": "dummy_end",
             "provider": "dummy",
             "raw_response": {"dummy_key": "dummy_value"},
@@ -90,15 +97,17 @@ class FailingDummyManager(RequestManager):
                 "total_tokens": 15
             }
         }
-        return LLMResponse.from_dict(response_dict)
+        return response_dict
 
 
 @pytest.mark.asyncio
 async def test_dummy_manager_request_failure():
     manager = FailingDummyManager(provider="dummy")
-    request = LLMRequest.from_prompt(
-        provider="dummy", prompt="fail this request", model="dummy-model"
-    )
+    request = {
+        "provider": "dummy", 
+        "messages": [{"role": "user", "content": "fail this request"}], 
+        "model": "dummy-model"
+    }
     with pytest.raises(Exception) as exc_info:
         await manager._make_provider_request(None, request)
     assert "Provider failure" in str(exc_info.value)
@@ -108,15 +117,21 @@ async def test_dummy_manager_request_failure():
 async def test_gather_with_mixed_success_and_failure():
     manager = FailingDummyManager(provider="dummy")
     requests = [
-        LLMRequest.from_prompt(
-            provider="dummy", prompt="Message 1", model="dummy-model"
-        ),
-        LLMRequest.from_prompt(
-            provider="dummy", prompt="fail this one", model="dummy-model"
-        ),
-        LLMRequest.from_prompt(
-            provider="dummy", prompt="Message 3", model="dummy-model"
-        ),
+        {
+            "provider": "dummy", 
+            "messages": [{"role": "user", "content": "Message 1"}], 
+            "model": "dummy-model"
+        },
+        {
+            "provider": "dummy", 
+            "messages": [{"role": "user", "content": "fail this one"}], 
+            "model": "dummy-model"
+        },
+        {
+            "provider": "dummy", 
+            "messages": [{"role": "user", "content": "Message 3"}], 
+            "model": "dummy-model"
+        },
     ]
 
     responses = await asyncio.gather(
@@ -135,9 +150,11 @@ async def test_gather_with_mixed_success_and_failure():
 async def test_task_scheduling_order():
     manager = DummyRequestManager(provider="dummy")
     requests = [
-        LLMRequest.from_prompt(
-            provider="dummy", prompt=f"Message {i}", model="dummy-model"
-        )
+        {
+            "provider": "dummy", 
+            "messages": [{"role": "user", "content": f"Message {i}"}], 
+            "model": "dummy-model"
+        }
         for i in range(3)
     ]
 
@@ -151,15 +168,17 @@ async def test_task_scheduling_order():
 
     # Despite scheduling in reverse order, responses should match request order
     for i, response in enumerate(responses):
-        assert f"Message {2-i}" in response.content
+        assert f"Message {2-i}" in response["content"]
 
 
 @pytest.mark.asyncio
 async def test_task_cancellation():
     manager = DummyRequestManager(provider="dummy")
-    request = LLMRequest.from_prompt(
-        provider="dummy", prompt="Cancel me", model="dummy-model"
-    )
+    request = {
+        "provider": "dummy", 
+        "messages": [{"role": "user", "content": "Cancel me"}], 
+        "model": "dummy-model"
+    }
 
     # Start the task
     task = asyncio.create_task(manager._make_provider_request(None, request))
