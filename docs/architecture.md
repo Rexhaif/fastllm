@@ -1,6 +1,29 @@
 # FastLLM Architecture
 
-FastLLM is a Python library that simplifies parallel processing of LLM API requests. This document outlines the core architecture and components of the library.
+This document provides an overview of the FastLLM architecture and design decisions.
+
+## Project Structure
+
+```
+fastllm/                  # Main package directory
+├── __init__.py           # Package exports
+├── core.py               # Core functionality (RequestBatch, RequestManager)
+├── cache.py              # Caching implementations
+└── providers/            # LLM provider implementations
+    ├── __init__.py
+    ├── base.py           # Base Provider class
+    └── openai.py         # OpenAI API implementation
+```
+
+## Package and Distribution
+
+The package follows these important design decisions:
+
+- **PyPI Package Name**: `fastllm-kit` (since `fastllm` was already taken on PyPI)
+- **Import Name**: `fastllm` (users import with `from fastllm import ...`)
+- **GitHub Repository**: Maintained at `github.com/rexhaif/fastllm`
+
+The import redirection is implemented using Hatchling's build configuration in `pyproject.toml`, which ensures that the package is published as `fastllm-kit` but exposes a top-level `fastllm` module for imports.
 
 ## System Architecture
 
@@ -25,50 +48,38 @@ FastLLM is a Python library that simplifies parallel processing of LLM API reque
 
 ### RequestBatch
 
-`RequestBatch` allows grouping multiple LLM requests into a batch for efficient parallel processing. It internally stores requests in an OpenAI Batch-compatible format, which is a minimal and efficient representation.
-
-#### OpenAI Batch Format
-
-Each request in a batch is stored in the following format:
-
-```json
-{
-  "custom_id": "request_hash#order_id", 
-  "url": "/v1/chat/completions", 
-  "body": {
-    "model": "gpt-3.5-turbo",
-    "messages": [...],
-    "temperature": 0.7,
-    ...
-  }
-}
-```
-
-- `custom_id`: Combined unique identifier (`request_id#order_id`) that allows extracting the request hash and order when needed
-- `url`: Endpoint path which also indicates the request type ("/v1/chat/completions" or "/v1/embeddings")
-- `body`: The actual request parameters
-
-This minimal format avoids redundant metadata storage while maintaining all necessary information. The `custom_id` field serves as the single source of truth for request identification and ordering, while the `url` determines the request type.
+The `RequestBatch` class provides an OpenAI-compatible request interface that allows for batching multiple requests together.
 
 ### RequestManager
 
-`RequestManager` handles the execution of request batches with features like:
+The `RequestManager` handles parallel processing of requests with configurable concurrency, retries, and caching.
 
-- Concurrency control
-- Retries with backoff
-- Progress tracking
-- Caching
+### Providers
 
-### CacheProvider
+Providers implement the interface for different LLM services:
 
-Abstract base class for different caching implementations:
+- `OpenAIProvider`: Handles requests to OpenAI-compatible APIs
 
-- `InMemoryCache`: Simple in-memory dictionary-based cache
-- `DiskCache`: Persistent disk-based cache using diskcache
+### Caching
 
-### ResponseWrapper
+The caching system supports:
 
-Wraps provider-specific responses with additional metadata and helper methods to standardize interactions with different response formats.
+- `InMemoryCache`: Fast, in-process caching
+- `DiskCache`: Persistent disk-based caching with TTL and size limits
+
+## Design Decisions
+
+1. **Parallel Processing**: Designed to maximize throughput by processing many requests in parallel
+2. **Request Deduplication**: Automatically detects and deduplicates identical requests
+3. **Response Ordering**: Maintains request ordering regardless of completion time
+4. **Caching**: Optional caching with customizable providers
+
+## Development and Testing
+
+- Tests are implemented using `pytest` and `pytest-asyncio`
+- Code formatting is handled by `ruff` and `black`
+- Task automation is handled by `just`
+- Dependency management uses `uv`
 
 ## Key Utilities
 

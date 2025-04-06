@@ -176,12 +176,7 @@ class DiskCache(CacheProvider):
     async def put(self, key: str, value) -> None:
         """Put a value in the cache with optional TTL."""
         try:
-            # Test if the value is JSON serializable
-            json.dumps(value)
             await self._run_in_executor(self._cache.set, key, value, self._ttl)
-        except TypeError as e:
-            # Re-raise TypeError for non-serializable values
-            raise TypeError(f"Value is not serializable: {str(e)}")
         except Exception as e:
             raise OSError(f"Failed to store cache value: {str(e)}")
 
