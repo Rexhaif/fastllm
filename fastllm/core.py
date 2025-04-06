@@ -260,7 +260,7 @@ class RequestManager:
         This provides a balance between creating too many tasks at once and
         underutilizing the available concurrency.
         """
-        return min(self.concurrency * 2, 1000)  # Cap at 1000 to prevent excessive memory usage
+        return min(self.concurrency * 2, 25000)  # Cap at 25000 to prevent excessive memory usage
 
     def process_batch(
         self,
