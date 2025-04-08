@@ -80,7 +80,7 @@ class OpenAIProvider(Provider[ChatCompletion]):
         if request_type == "embedding":
             return cast(CreateEmbeddingResponse, data)
         else:
-            return ChatCompletion(**data)
+            return cast(ChatCompletion, data)
 
         
     

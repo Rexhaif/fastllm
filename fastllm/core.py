@@ -636,20 +636,6 @@ class RequestBatch(AbstractContextManager):
                     **kwargs,
                 }
                 
-                # Handle default values consistently:
-                # If a parameter is None and has a non-None default, use the default
-                defaults = {
-                    "temperature": 0.7,
-                    "top_p": 1.0,
-                    "n": 1,
-                    "presence_penalty": 0.0,
-                    "frequency_penalty": 0.0,
-                }
-                
-                for key, default in defaults.items():
-                    if key in body and body[key] is None:
-                        body[key] = default
-                
                 # Remove None values to match OpenAI's behavior
                 body = {k: v for k, v in body.items() if v is not None}
                 
