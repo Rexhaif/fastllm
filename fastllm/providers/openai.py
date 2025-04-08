@@ -80,6 +80,11 @@ class OpenAIProvider(Provider[ChatCompletion]):
         if request_type == "embedding":
             return data
         
+        # fix google gemini incompatibility with OpenAI standard
+        for i, choice in enumerate(data["choices"]):
+            choice['finish_reason'] = choice['finish_reason'].lower()
+            data["choices"][i] = choice
+        
         return ChatCompletion(**data)
     
     def _prepare_payload(self, request: dict[str, Any], request_type: str) -> dict[str, Any]:
