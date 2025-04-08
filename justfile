@@ -13,7 +13,7 @@ install:
 
 # Run tests
 test:
-    uv run pytest tests/ -v --cov=fastllm
+    uv run pytest tests/ -v
 
 # Format code using ruff
 format:

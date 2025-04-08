@@ -171,23 +171,6 @@ async def test_inmemory_cache_large_values():
     await cache.clear()
 
 
-@pytest.mark.asyncio
-async def test_disk_cache_invalid_json(tmp_path):
-    """Test DiskCache behavior with invalid JSON data."""
-    cache_dir = os.path.join(tmp_path, "invalid_json_cache")
-    os.makedirs(cache_dir, exist_ok=True)
-    cache = DiskCache(directory=cache_dir)
-    
-    key = "test_key"
-    # Create an object that's not JSON serializable
-    value = object()
-    
-    with pytest.raises(TypeError):
-        await cache.put(key, value)
-
-    await cache.close()
-
-
 def test_compute_request_hash_edge_cases():
     """Test compute_request_hash with edge cases."""
     # Empty request

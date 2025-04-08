@@ -1,9 +1,10 @@
 """OpenAI API provider implementation."""
 
-from typing import Any, Optional, Union
+from typing import Any, Optional, cast, Type
 
 import httpx
 from openai.types.chat import ChatCompletion
+from openai.types import CreateEmbeddingResponse
 
 from fastllm.providers.base import Provider
 
@@ -40,7 +41,7 @@ class OpenAIProvider(Provider[ChatCompletion]):
         client: httpx.AsyncClient,
         request: dict[str, Any],
         timeout: float,
-    ) -> ChatCompletion:
+    ) -> ChatCompletion | CreateEmbeddingResponse:
         """Make a request to the OpenAI API."""
         # Determine request type from the request or infer from content
         if isinstance(request, dict):
@@ -76,16 +77,12 @@ class OpenAIProvider(Provider[ChatCompletion]):
         response.raise_for_status()
         data = response.json()
 
-        # For embeddings, don't try to parse as ChatCompletion
         if request_type == "embedding":
-            return data
+            return cast(CreateEmbeddingResponse, data)
+        else:
+            return ChatCompletion(**data)
+
         
-        # fix google gemini incompatibility with OpenAI standard
-        for i, choice in enumerate(data["choices"]):
-            choice['finish_reason'] = choice['finish_reason'].lower()
-            data["choices"][i] = choice
-        
-        return ChatCompletion(**data)
     
     def _prepare_payload(self, request: dict[str, Any], request_type: str) -> dict[str, Any]:
         """Prepare the API payload from the request data."""
