@@ -15,20 +15,22 @@ High-performance parallel LLM API request tool with support for multiple provide
 
 ## Installation
 
-First, install uv if you haven't already:
+Use pip:
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
+pip install fastllm-kit
 ```
 
-Then install fastllm:
+Alternatively, use uv:
 ```bash
-uv pip install git+https://github.com/Rexhaif/fastllm.git
+uv pip install fastllm-kit
 ```
+
+> **Important:** fastllm does not support yet libsqlite3.49.1, please use libsqlite3.49.0 or lower. See [this issue](https://github.com/grantjenks/python-diskcache/issues/343) for more details. This might be an issue for users with conda environments.
 
 For development:
 ```bash
 # Clone the repository
-git clone https://github.com/rexhaif/fastllm
+git clone https://github.com/Rexhaif/fastllm.git
 cd fastllm
 
 # Create a virtual environment and install dependencies
