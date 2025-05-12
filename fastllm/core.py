@@ -16,6 +16,8 @@ from typing import (
 import httpx
 from openai.types import CompletionUsage
 from openai.types.chat import ChatCompletion
+from openai.types.chat.chat_completion import Choice, CompletionUsage
+from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from pydantic import BaseModel
 from rich.progress import (
     BarColumn,
@@ -36,6 +38,23 @@ logger = logging.getLogger(__name__)
 
 # Define a type variable for provider-specific response types
 ResponseT = TypeVar("ResponseT", bound=Union[ChatCompletion, Any])
+
+DUMMY_RESPONSE = ChatCompletion(
+    id="dummy_id",
+    choices=[
+        Choice(
+            index=0,
+            message=ChatCompletionMessage(content="dummy_content", role="assistant"),
+            finish_reason="stop"
+        )
+    ],
+    created=0,
+    model="dummy_model",
+    object="chat.completion",
+    service_tier="default",
+    system_fingerprint="dummy_system_fingerprint",
+    usage=CompletionUsage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+)
 
 
 class ResponseWrapper(Generic[ResponseT]):
@@ -242,7 +261,9 @@ class RequestManager:
         retry_attempts: int = 3,
         retry_delay: float = 1.0,
         show_progress: bool = True,
-        caching_provider: Optional['CacheProvider'] = None
+        caching_provider: Optional['CacheProvider'] = None,
+        return_dummy_on_error: bool = False,
+        dummy_response: Optional[ResponseT] = DUMMY_RESPONSE
     ):
         self.provider = provider
         self.concurrency = concurrency
@@ -251,6 +272,8 @@ class RequestManager:
         self.retry_delay = retry_delay
         self.show_progress = show_progress
         self.cache = caching_provider
+        self.return_dummy_on_error = return_dummy_on_error
+        self.dummy_response = dummy_response
 
     def _calculate_chunk_size(self) -> int:
         """Calculate optimal chunk size based on concurrency.
@@ -303,7 +326,6 @@ class RequestManager:
         
         if request_id is None:
             # Only compute if not already present
-            from fastllm.cache import compute_request_hash
             request_id = compute_request_hash(request)
             request['_request_id'] = request_id
 
@@ -369,7 +391,11 @@ class RequestManager:
                     if progress:
                         # Update progress even for failed requests
                         progress.update(0, 0, is_cache_hit=False)
-                    raise
+                    if self.return_dummy_on_error:
+                        # no caching for failed requests
+                        return ResponseWrapper(self.dummy_response, request_id, order_id)
+                    else:
+                        raise
                 await asyncio.sleep(self.retry_delay * (attempt + 1))
 
     async def _process_batch_async(
@@ -406,7 +432,6 @@ class RequestManager:
             for i, request in enumerate(batch):
                 request = request.copy()  # Don't modify original request
                 if "_request_id" not in request:
-                    from fastllm.cache import compute_request_hash
                     request["_request_id"] = compute_request_hash(request)
                 request["_order_id"] = i
                 requests.append(request)
@@ -454,42 +479,6 @@ class RequestManager:
 
         # Sort responses by order ID and return just the responses
         return [r for _, r in sorted(all_results, key=lambda x: x[0])]
-
-    async def _make_provider_request(
-        self,
-        client: Optional[httpx.AsyncClient],
-        request: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Make a single request to the provider.
-        
-        This method handles both direct dictionaries and OpenAI Batch format requests.
-        """
-        try:
-            # If request is in OpenAI Batch format, extract the body and metadata
-            if "custom_id" in request and "url" in request and "body" in request:
-                request_id, _ = request["custom_id"].split("#")
-                provider_name = self.provider.__class__.__name__.replace("Provider", "").lower()
-                request_body = request["body"]
-                request_type = "chat_completion" if request["url"] == "/v1/chat/completions" else "embedding"
-            else:
-                # Legacy format
-                request_id = id(request)
-                provider_name = request.get("provider", self.provider.__class__.__name__.replace("Provider", "").lower())
-                request_body = request
-                request_type = request.get("type", "chat_completion")
-            
-            # Make the actual request
-            response_dict = await self.provider.make_request(client, request_body, self.timeout)
-            
-            # Add required fields
-            response_dict["request_id"] = request_id
-            response_dict["provider"] = provider_name
-            response_dict["raw_response"] = {"provider_response": response_dict.copy()}
-            
-            return response_dict
-        except Exception as e:
-            # Re-raise provider errors as is
-            raise e
 
 
 class RequestBatch(AbstractContextManager):

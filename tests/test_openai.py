@@ -58,6 +58,21 @@ def test_prepare_payload_omits_none_values():
     assert "stop" not in payload
 
 
+def test_prepare_payload_omits_internal_tracking_ids():
+    # Test that internal tracking ids are never sent to providers
+    provider = OpenAIProvider(api_key="testkey")
+    request = {
+        "model": "gpt-3.5-turbo",
+        "messages": [{"role": "user", "content": "Hello world"}],
+        "_order_id": 123,
+        "_request_id": "abcd1234"
+    }
+    payload = provider._prepare_payload(request, "chat_completion")
+    # _order_id and _request_id should not be in payload
+    assert "_order_id" not in payload
+    assert "_request_id" not in payload
+
+
 def test_prepare_payload_with_extra_params():
     # Test that extra parameters are included in the payload
     provider = OpenAIProvider(api_key="testkey")

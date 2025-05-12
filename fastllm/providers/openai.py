@@ -78,9 +78,9 @@ class OpenAIProvider(Provider[ChatCompletion]):
         data = response.json()
 
         if request_type == "embedding":
-            return cast(CreateEmbeddingResponse, data)
+            return CreateEmbeddingResponse(**data)
         else:
-            return cast(ChatCompletion, data)
+            return ChatCompletion(**data)
 
         
     
@@ -94,7 +94,7 @@ class OpenAIProvider(Provider[ChatCompletion]):
         }
         
         # Start with a copy of the request
-        payload = {k: v for k, v in request.items() if k not in ["provider", "type"]}
+        payload = {k: v for k, v in request.items() if k not in ["provider", "type", "_order_id", "_request_id"]}
         
         # Handle embedding requests
         if request_type == "embedding":

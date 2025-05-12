@@ -35,7 +35,7 @@ clean:
     find . -type d -name __pycache__ -exec rm -rf {} +
 
 live_test_completions:
-    uv run python examples/parallel_test.py --model meta-llama/llama-3.2-3b-instruct --repeats 100 --concurrency 75 --cache-type memory --output NO_OUTPUT
+    uv run python examples/parallel_test.py --model openai/gpt-4o-mini --repeats 100 --concurrency 75 --cache-type memory --output NO_OUTPUT
 
 # Build the package for distribution
 build:

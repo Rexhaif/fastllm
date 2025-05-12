@@ -1,6 +1,6 @@
 [project]
 name = "fastllm-kit"
-version = "0.1.7"
+version = "0.1.9"
 description = "High-performance parallel LLM API request tool with caching and multiple provider support"
 authors = [
     {name = "Daniil Larionov", email = "rexhaif.io@gmail.com"}

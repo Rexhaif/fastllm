@@ -35,7 +35,7 @@ def process_response(
         "index": index,
         "type": "success",
         "request_id": response.request_id,
-        "raw_response": response.response.model_dump(),
+        "raw_response": response.response,
     }
 
 
@@ -69,7 +69,6 @@ def run_test(
                 ],
                 temperature=temperature,
                 max_completion_tokens=max_tokens,
-                include_reasoning=True,
             )
 
     # Show configuration
@@ -100,7 +99,7 @@ def run_test(
 
     provider = OpenAIProvider(
         api_key=api_key,
-        api_base="https://openrouter.ai/api/v1",
+        api_base="https://llm.buffedby.ai/v1",
     )
     manager = RequestManager(
         provider=provider,
@@ -247,7 +246,7 @@ def main(
     ),
 ) -> None:
     """Run parallel request test."""
-    api_key = os.environ["OPENROUTER_API_KEY"]
+    api_key = os.environ["BB_AI_API_KEY"]
 
     run_test(
         api_key=api_key,
