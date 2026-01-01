@@ -142,21 +142,20 @@ with RequestBatch() as batch:
 
 ## Advanced Configuration
 
-### Custom Chunk Size
+### Concurrency Control
 
-The RequestManager automatically calculates optimal chunk sizes, but you can influence this through the concurrency setting:
+The RequestManager uses a semaphore to control concurrent requests. The concurrency setting determines the maximum number of simultaneous requests:
 
 ```python
 manager = RequestManager(
     provider=provider,
-    concurrency=50  # Will affect chunk size calculation
+    concurrency=50  # Maximum concurrent requests
 )
 ```
 
-Chunk size is calculated as:
-```python
-chunk_size = min(concurrency * 2, 1000)
-```
+All requests are submitted at once to the asyncio event loop, and the semaphore ensures that only up to `concurrency` requests run simultaneously.
+
+**Memory Considerations**: When processing very large batches (e.g., 100,000+ requests), all request objects are held in memory at once. If memory is a concern, consider splitting your batch into smaller logical groups and processing them sequentially.
 
 ### Error Handling Configuration
 
@@ -214,7 +213,7 @@ OPENAI_ORG_ID=your-org-id
 
 - Close cache providers when done
 - Monitor memory usage
-- Use appropriate chunk sizes for your use case
+- Use appropriate concurrency settings for your use case
 
 ## Performance Optimization
 
@@ -233,9 +232,9 @@ OPENAI_ORG_ID=your-org-id
 
 ### Memory Management
 
-- Use appropriate chunk sizes
 - Monitor memory usage
 - Clean up resources properly
+- Use appropriate concurrency settings to balance throughput and memory
 
 ## Monitoring and Debugging
 

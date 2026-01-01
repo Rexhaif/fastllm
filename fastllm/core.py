@@ -275,16 +275,6 @@ class RequestManager:
         self.return_dummy_on_error = return_dummy_on_error
         self.dummy_response = dummy_response
 
-    def _calculate_chunk_size(self) -> int:
-        """Calculate optimal chunk size based on concurrency.
-        
-        The chunk size is calculated as 2 * concurrency to allow for some overlap
-        and better resource utilization while still maintaining reasonable memory usage.
-        This provides a balance between creating too many tasks at once and
-        underutilizing the available concurrency.
-        """
-        return min(self.concurrency * 10, 25000)  # Cap at 25000 to prevent excessive memory usage
-
     def process_batch(
         self,
         batch: Union[list[dict[str, Any]], "RequestBatch"],
@@ -452,30 +442,23 @@ class RequestManager:
             async with semaphore:
                 return await self._process_request_async(client, request, progress)
 
-        async def process_batch_chunk(
-            client: httpx.AsyncClient, chunk: list[dict[str, Any]]
+        async def process_all_requests(
+            client: httpx.AsyncClient, requests: list[dict[str, Any]]
         ) -> list[ResponseWrapper[ResponseT]]:
-            """Process a chunk of requests."""
-            batch_tasks = [
-                process_request_with_semaphore(client, req, tracker) for req in chunk
+            """Process all requests concurrently with semaphore control."""
+            tasks = [
+                process_request_with_semaphore(client, req, tracker) for req in requests
             ]
-            results = await asyncio.gather(*batch_tasks)
+            results = await asyncio.gather(*tasks)
             return [(r._order_id, r) for r in results]
 
-        # Process requests in chunks based on calculated chunk size
-        chunk_size = self._calculate_chunk_size()
-        all_results = []
+        # Process all requests at once - the semaphore controls concurrency
         context = tracker if tracker else nullcontext()
 
         # Create a single client for the entire batch
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             with context:
-                for batch_start in range(0, len(requests), chunk_size):
-                    batch_requests = requests[
-                        batch_start : batch_start + chunk_size
-                    ]
-                    batch_results = await process_batch_chunk(client, batch_requests)
-                    all_results.extend(batch_results)
+                all_results = await process_all_requests(client, requests)
 
         # Sort responses by order ID and return just the responses
         return [r for _, r in sorted(all_results, key=lambda x: x[0])]
