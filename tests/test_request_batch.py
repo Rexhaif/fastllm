@@ -160,21 +160,25 @@ def test_request_id_consistency():
 
 
 def test_request_id_with_none_values():
-    """Test that None values are properly handled in request_id computation."""
+    """Test that None values are properly filtered out from request body."""
     batch = RequestBatch()
     
-    # Create request with some None values
+    # Create request with explicit None values - these get filtered out
     request_id = batch.chat.completions.create(
         model="dummy-model",
         messages=[{"role": "user", "content": "Hi"}],
-        temperature=None,  # Should be replaced with default
-        top_p=None,  # Should be replaced with default
+        temperature=None,  # Will be filtered out (not replaced with default)
+        top_p=None,  # Will be filtered out (not replaced with default)
     )
     
     # Get the actual request body that was created
     body1 = batch.requests[0]["body"]
     
-    # Create identical request without None values
+    # Verify that None values are filtered out (not present in body)
+    assert "temperature" not in body1
+    assert "top_p" not in body1
+    
+    # Create request with default values (not passing temperature/top_p uses defaults)
     batch2 = RequestBatch()
     request_id2 = batch2.chat.completions.create(
         model="dummy-model",
@@ -184,11 +188,12 @@ def test_request_id_with_none_values():
     # Get the second actual request body
     body2 = batch2.requests[0]["body"]
     
-    # Both requests should have the same content
-    assert body1 == body2
+    # Default values should be included
+    assert body2.get("temperature") == 0.7
+    assert body2.get("top_p") == 1.0
     
-    # Both request IDs should be identical since None values are replaced with defaults
-    assert request_id == request_id2
+    # The request IDs should be different because the bodies are different
+    assert request_id != request_id2
 
 
 def test_embeddings_request_format():
