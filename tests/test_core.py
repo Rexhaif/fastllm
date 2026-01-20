@@ -92,8 +92,8 @@ async def test_request_manager():
         "model": "dummy-model"
     }
     
-    # Test make_provider_request
-    response = await manager._make_provider_request(None, request)
+    # Test that provider.make_request works correctly
+    response = await provider.make_request(None, request, manager.timeout)
     assert response["content"] == "Test response"
     assert response["finish_reason"] == "stop"
     assert response["usage"]["total_tokens"] == 15
@@ -116,7 +116,7 @@ async def test_request_manager_failure():
     }
     
     with pytest.raises(Exception) as exc_info:
-        await manager._make_provider_request(None, request)
+        await provider.make_request(None, request, manager.timeout)
     assert "Provider error" in str(exc_info.value)
 
 

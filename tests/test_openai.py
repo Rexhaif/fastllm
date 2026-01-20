@@ -237,14 +237,15 @@ async def test_openai_provider_make_embedding_request():
         request_data, 
         timeout=1.0
     )
-    # For embeddings, we expect a dict since it doesn't parse as ChatCompletion
-    assert isinstance(result, dict)
-    assert result["object"] == "list"
-    assert "data" in result
-    assert isinstance(result["data"], list)
-    assert len(result["data"]) > 0
-    assert "embedding" in result["data"][0]
-    assert isinstance(result["data"][0]["embedding"], list)
+    # For embeddings, we expect a CreateEmbeddingResponse object
+    from openai.types import CreateEmbeddingResponse
+    assert isinstance(result, CreateEmbeddingResponse)
+    assert result.object == "list"
+    assert hasattr(result, "data")
+    assert isinstance(result.data, list)
+    assert len(result.data) > 0
+    assert hasattr(result.data[0], "embedding")
+    assert isinstance(result.data[0].embedding, list)
 
 
 class FakeAsyncClientError:
